@@ -1,0 +1,9 @@
+.git
+.idea
+target
+node_modules
+*.log
+deploy/.env
+deploy/*.env
+deploy/evidence
+src/main/resources/data/testbed/local

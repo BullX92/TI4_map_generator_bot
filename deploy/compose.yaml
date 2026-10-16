@@ -1,0 +1,55 @@
+name: ti4-wrapper
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ti4_wrapper
+      POSTGRES_USER: ti4_wrapper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private database password in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ti4_wrapper -d ti4_wrapper"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+  server:
+    image: ${WRAPPER_IMAGE:?Set the SHA-tagged image built in your own GHCR namespace}
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WRAPPER_PORT:-18081}:8081"
+    environment:
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/ti4_wrapper
+      POSTGRES_USER: ti4_wrapper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private database password in .env}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?Set your own bot token}
+      DISCORD_BOT_USERID: ${DISCORD_BOT_USERID:?Set your own bot user id}
+      GUILDID_LIST: ${GUILDID_LIST:?Set your private Discord guild id}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
+      DISCORD_ADMIN_ROLE_IDS: ${DISCORD_ADMIN_ROLE_IDS:-}
+      DISCORD_DEVELOPER_ROLE_IDS: ${DISCORD_DEVELOPER_ROLE_IDS:-}
+      DISCORD_BOTHELPER_ROLE_IDS: ${DISCORD_BOTHELPER_ROLE_IDS:-}
+      TI4_WRAPPER_ENABLED: ${TI4_WRAPPER_ENABLED:-true}
+      MANAGEMENT_ENDPOINTS_ACTUATOR_API_KEY: ${MANAGEMENT_ENDPOINTS_ACTUATOR_API_KEY:-}
+      DB_PATH: /opt/STORAGE
+      RESOURCE_PATH: /opt/resources
+    volumes:
+      - game-storage:/opt/STORAGE
+    mem_limit: ${SERVER_MEMORY_LIMIT:-4g}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8081/api/public/ready >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 180s
+      retries: 12
+volumes:
+  postgres-data:
+  game-storage:

@@ -11,6 +11,7 @@ import ti4.discord.interactions.listeners.context.ButtonContext;
 import ti4.discord.interactions.routing.AnnotationHandler;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.discord.interactions.routing.HandlerRegistry;
+import ti4.discord.interactions.routing.InteractionProcessingResult;
 import ti4.executors.ExecutionLockManager;
 import ti4.executors.ExecutionLockType;
 import ti4.executors.ExecutorServiceManager;
@@ -54,23 +55,22 @@ public class ButtonProcessor {
                 lockType);
     }
 
-    public static void processNow(ButtonInteractionEvent event) {
+    public static InteractionProcessingResult processNow(ButtonInteractionEvent event) {
         long now = System.currentTimeMillis();
         ButtonPressTimeline timeline = ButtonPressTimeline.received(now, now);
         runtimeMonitor.recordQueued();
         String gameName = GameNameService.getGameNameFromChannel(event);
         HandlerRegistry.Route<ButtonContext> route =
                 registry.resolve(event.getButton().getCustomId());
-        if (gameName == null) {
-            process(event, route, timeline);
-            return;
-        }
         ExecutionLockType lockType = route.shouldSave() ? ExecutionLockType.WRITE : ExecutionLockType.READ;
-        ExecutionLockManager.lock(gameName, lockType);
+        if (gameName != null) ExecutionLockManager.lock(gameName, lockType);
         try {
-            process(event, route, timeline);
+            return process(event, route, timeline);
+        } catch (Exception e) {
+            BotLogger.error(new LogOrigin(event), "Synchronous button interaction failed", e);
+            return InteractionProcessingResult.FAILED;
         } finally {
-            ExecutionLockManager.unlock(gameName, lockType);
+            if (gameName != null) ExecutionLockManager.unlock(gameName, lockType);
         }
     }
 
@@ -81,7 +81,7 @@ public class ButtonProcessor {
                 + ButtonHelper.getButtonRepresentation(event.getButton());
     }
 
-    private static void process(
+    private static InteractionProcessingResult process(
             ButtonInteractionEvent event, HandlerRegistry.Route<ButtonContext> route, ButtonPressTimeline timeline) {
         timeline.markStarted();
         runtimeMonitor.recordStarted();
@@ -90,12 +90,13 @@ public class ButtonProcessor {
         timeline.markCompleted(ButtonPressStage.CONTEXT);
         if (!context.isValid()) {
             runtimeMonitor.recordInvalid();
-            return;
+            return InteractionProcessingResult.REJECTED;
         }
 
         log(event);
         timeline.markCompleted(ButtonPressStage.LOG);
 
+        InteractionProcessingResult result = InteractionProcessingResult.COMPLETED;
         try {
             CombatReplayService combatReplayService =
                     CombatContestSettings.isEnabledStatic() ? SpringContext.getBean(CombatReplayService.class) : null;
@@ -108,7 +109,13 @@ public class ButtonProcessor {
             try {
                 String handlerId = resolveButtonInteractionEvent(context, route);
                 timeline.markResolved(handlerId);
+                result = switch (handlerId) {
+                    case DISABLED_HANDLER_ID -> InteractionProcessingResult.UNSUPPORTED;
+                    case UNROUTED_HANDLER_ID -> InteractionProcessingResult.UNROUTED;
+                    default -> InteractionProcessingResult.COMPLETED;
+                };
 
+                if (context.isHandlerFailed()) result = InteractionProcessingResult.FAILED;
                 context.save();
                 timeline.markCompleted(ButtonPressStage.SAVE);
 
@@ -123,6 +130,7 @@ public class ButtonProcessor {
             }
         } catch (Exception e) {
             BotLogger.error(new LogOrigin(event, context), "Something went wrong with button interaction", e);
+            result = InteractionProcessingResult.FAILED;
         } finally {
             RollbarManager.clear();
         }
@@ -131,6 +139,7 @@ public class ButtonProcessor {
         if (!AsyncTI4DiscordBot.isUnstable()) {
             runtimeMonitor.submit(event, timeline);
         }
+        return result;
     }
 
     private static void log(ButtonInteractionEvent event) {

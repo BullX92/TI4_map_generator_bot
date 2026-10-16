@@ -44,6 +44,9 @@ public abstract class ListenerContext {
     @Setter
     protected boolean shouldSave = true;
 
+    @Setter
+    private boolean handlerFailed;
+
     public abstract GenericInteractionCreateEvent getEvent();
 
     protected abstract String getContextType();

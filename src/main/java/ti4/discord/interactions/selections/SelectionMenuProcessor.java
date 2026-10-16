@@ -8,7 +8,9 @@ import ti4.contest.replay.service.CombatReplayService;
 import ti4.discord.interactions.listeners.context.SelectionMenuContext;
 import ti4.discord.interactions.routing.AnnotationHandler;
 import ti4.discord.interactions.routing.HandlerRegistry;
+import ti4.discord.interactions.routing.InteractionProcessingResult;
 import ti4.discord.interactions.routing.SelectionHandler;
+import ti4.executors.ExecutionLockManager;
 import ti4.executors.ExecutionLockType;
 import ti4.executors.ExecutorServiceManager;
 import ti4.game.Game;
@@ -46,11 +48,27 @@ public final class SelectionMenuProcessor {
                 lockType);
     }
 
-    private static void process(StringSelectInteractionEvent event, HandlerRegistry.Route<SelectionMenuContext> route) {
+    public static InteractionProcessingResult processNow(StringSelectInteractionEvent event) {
+        String gameName = GameNameService.getGameNameFromChannel(event);
+        var route = registry.resolve(event.getSelectMenu().getCustomId());
+        ExecutionLockType lockType = route.shouldSave() ? ExecutionLockType.WRITE : ExecutionLockType.READ;
+        if (gameName != null) ExecutionLockManager.lock(gameName, lockType);
+        try {
+            return process(event, route);
+        } catch (Exception e) {
+            BotLogger.error(new LogOrigin(event), "Synchronous selection interaction failed", e);
+            return InteractionProcessingResult.FAILED;
+        } finally {
+            if (gameName != null) ExecutionLockManager.unlock(gameName, lockType);
+        }
+    }
+
+    private static InteractionProcessingResult process(
+            StringSelectInteractionEvent event, HandlerRegistry.Route<SelectionMenuContext> route) {
         SelectionMenuContext context = new SelectionMenuContext(event);
         if (!context.isValid()) {
             BotLogger.warning(new LogOrigin(event), "Invalid selection menu context.");
-            return;
+            return InteractionProcessingResult.REJECTED;
         }
         try {
             RollbarManager.putInteractionMetadata("select_menu", event);
@@ -64,8 +82,9 @@ public final class SelectionMenuProcessor {
                         combatReplayService.capturePreInteractionSnapshot(context.getGame()));
             }
             try {
-                resolveSelectionMenu(context, route);
+                InteractionProcessingResult result = resolveSelectionMenu(context, route);
                 context.save();
+                return result;
             } finally {
                 if (combatReplayService != null) {
                     CombatReplayService.clearPreInteractionSnapshot();
@@ -75,15 +94,18 @@ public final class SelectionMenuProcessor {
             String message = "Selection Menu issue in event: " + event.getComponentId() + "\n> Channel: "
                     + event.getChannel().getAsMention() + "\n> Command: " + event.getValues();
             BotLogger.error(new LogOrigin(event), message, e);
+            return InteractionProcessingResult.FAILED;
         } finally {
             RollbarManager.clear();
         }
     }
 
-    private static void resolveSelectionMenu(
+    private static InteractionProcessingResult resolveSelectionMenu(
             SelectionMenuContext context, HandlerRegistry.Route<SelectionMenuContext> route) {
         if (route.dispatch(context)) {
-            return;
+            return context.isHandlerFailed()
+                    ? InteractionProcessingResult.FAILED
+                    : InteractionProcessingResult.COMPLETED;
         }
 
         StringSelectInteractionEvent event = context.getEvent();
@@ -96,8 +118,9 @@ public final class SelectionMenuProcessor {
                 } catch (Exception e) {
                     String messageText = "Error trying to execute selection: " + event.getComponentId();
                     BotLogger.error(new LogOrigin(event), messageText, e);
+                    return InteractionProcessingResult.FAILED;
                 }
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
         }
 
@@ -106,6 +129,7 @@ public final class SelectionMenuProcessor {
                 new LogOrigin(event, context),
                 "Unrouted selection menu: `" + context.getMenuID() + "`. This could just be a stale selection menu.");
         MessageHelper.sendMessageToEventChannel(event, "We couldn't resolve what to do with this selection.");
+        return InteractionProcessingResult.UNROUTED;
     }
 
     @SelectionHandler("jmfA_")

@@ -180,6 +180,7 @@ public class AnnotationHandler {
                 context.setShouldSave(save);
                 method.invoke(null, args.toArray());
             } catch (InvocationTargetException e) {
+                context.setHandlerFailed(true);
                 GenericInteractionCreateEvent origin = context.getEvent();
                 for (Object arg : args) {
                     if (arg instanceof ButtonInteractionEvent buttonInteractionEvent) {
@@ -213,6 +214,7 @@ public class AnnotationHandler {
                 CircuitBreaker.incrementThresholdCount(
                         "InvocationTargetException in AnnotationHandler for: " + context.getOrigComponentID());
             } catch (Exception e) {
+                context.setHandlerFailed(true);
                 List<String> paramTypes = Arrays.stream(method.getParameters())
                         .map(param -> param.getType().getSimpleName())
                         .toList();

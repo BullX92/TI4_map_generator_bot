@@ -10,7 +10,9 @@ import ti4.discord.JdaService;
 import ti4.discord.interactions.listeners.context.ModalContext;
 import ti4.discord.interactions.routing.AnnotationHandler;
 import ti4.discord.interactions.routing.HandlerRegistry;
+import ti4.discord.interactions.routing.InteractionProcessingResult;
 import ti4.discord.interactions.routing.ModalHandler;
+import ti4.executors.ExecutionLockManager;
 import ti4.executors.ExecutionLockType;
 import ti4.executors.ExecutorServiceManager;
 import ti4.game.Game;
@@ -70,11 +72,27 @@ public final class ModalListener extends ListenerAdapter {
                 lockType);
     }
 
-    private void handleModal(ModalInteractionEvent event, HandlerRegistry.Route<ModalContext> route) {
+    public InteractionProcessingResult processNow(ModalInteractionEvent event) {
+        String gameName = GameNameService.getGameNameFromChannel(event);
+        var route = registry.resolve(event.getModalId());
+        ExecutionLockType lockType = route.shouldSave() ? ExecutionLockType.WRITE : ExecutionLockType.READ;
+        if (gameName != null) ExecutionLockManager.lock(gameName, lockType);
+        try {
+            return handleModal(event, route);
+        } catch (Exception e) {
+            BotLogger.error(new LogOrigin(event), "Synchronous modal interaction failed", e);
+            return InteractionProcessingResult.FAILED;
+        } finally {
+            if (gameName != null) ExecutionLockManager.unlock(gameName, lockType);
+        }
+    }
+
+    private InteractionProcessingResult handleModal(
+            ModalInteractionEvent event, HandlerRegistry.Route<ModalContext> route) {
         ModalContext context = new ModalContext(event);
         if (!context.isValid()) {
             BotLogger.warning(new LogOrigin(event), "Invalid modal context.");
-            return;
+            return InteractionProcessingResult.REJECTED;
         }
         try {
             RollbarManager.putInteractionMetadata("modal", event);
@@ -88,8 +106,9 @@ public final class ModalListener extends ListenerAdapter {
                         combatReplayService.capturePreInteractionSnapshot(context.getGame()));
             }
             try {
-                resolveModalInteractionEvent(context, route);
+                InteractionProcessingResult result = resolveModalInteractionEvent(context, route);
                 context.save();
+                return result;
             } finally {
                 if (combatReplayService != null) {
                     CombatReplayService.clearPreInteractionSnapshot();
@@ -99,35 +118,39 @@ public final class ModalListener extends ListenerAdapter {
             String message = "Modal issue in event: " + event.getModalId() + "\n> Channel: "
                     + event.getChannel().getAsMention() + "\n> Command: " + event.getValues();
             BotLogger.error(new LogOrigin(event), message, e);
+            return InteractionProcessingResult.FAILED;
         } finally {
             RollbarManager.clear();
         }
     }
 
-    private void resolveModalInteractionEvent(
+    private InteractionProcessingResult resolveModalInteractionEvent(
             @Nonnull ModalContext context, HandlerRegistry.Route<ModalContext> route) {
         String modalID = context.getModalID();
         Game game = context.getGame();
 
-        if (route.dispatch(context)) return;
+        if (route.dispatch(context))
+            return context.isHandlerFailed()
+                    ? InteractionProcessingResult.FAILED
+                    : InteractionProcessingResult.COMPLETED;
 
         if (modalID.startsWith("jmfA_")) {
             // Detect new settings menu navId() to route to the correct handler.
             String draftSystemNavPart = ".*_draft[._].*";
             if (modalID.matches(draftSystemNavPart)) {
                 game.initializeDraftSystemSettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             if (BaseGameMiniMiltySettings.isBaseGameMiniMiltyMenuComponent(modalID)) {
                 game.initializeBaseGameMiniMiltySettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             if (FrankenSettings.isFrankenMenuComponent(modalID)) {
                 game.initializeFrankenSettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             game.initializeMiltySettings().parseInput(context);
-            return;
+            return InteractionProcessingResult.COMPLETED;
         }
 
         context.setShouldSave(false);
@@ -135,5 +158,6 @@ public final class ModalListener extends ListenerAdapter {
                 new LogOrigin(context.getEvent(), context),
                 "Unrouted modal: `" + modalID + "`. This could just be a stale modal.");
         MessageHelper.sendMessageToEventChannel(context.getEvent(), "We couldn't resolve what to do with this modal.");
+        return InteractionProcessingResult.UNROUTED;
     }
 }

@@ -12,6 +12,7 @@ public class ListenerManager {
                 new GuildWhitelistListener(),
                 new BotRuntimeStatsListener(),
                 new MessageListener(),
+                WrapperMessageListener.getBean(),
                 new LazaxMinigameReactionListener(),
                 new SlashCommandListener(),
                 new ContextInteractionListener(),

@@ -18,7 +18,7 @@ import ti4.helpers.ButtonHelper;
 import ti4.logging.BotLogger;
 import ti4.spring.service.deploy.ActiveLeaseService;
 
-class ButtonListener extends ListenerAdapter {
+public class ButtonListener extends ListenerAdapter {
 
     private static final Set<String> BUTTONS_TO_THINK_ABOUT = Set.of("showGameAgain", "bothelperDashboard_manageRoles");
 
@@ -61,7 +61,7 @@ class ButtonListener extends ListenerAdapter {
      * buttonEvent.getHook().deleteOriginal().queue(Consumers.nop(), BotLogger::catchRestError);
      * }`
      */
-    private static boolean shouldShowBotIsThinking(ButtonInteractionEvent event) {
+    public static boolean shouldShowBotIsThinking(ButtonInteractionEvent event) {
         String buttonId = event.getButton().getCustomId();
         return BUTTONS_TO_THINK_ABOUT.contains(buttonId)
                 || (buttonId != null

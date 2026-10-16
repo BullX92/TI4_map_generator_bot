@@ -26,6 +26,7 @@ import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.interactions.DiscordLocale;
+import net.dv8tion.jda.api.interactions.Interaction;
 import net.dv8tion.jda.api.interactions.InteractionContextType;
 import net.dv8tion.jda.api.interactions.InteractionHook;
 import net.dv8tion.jda.api.interactions.InteractionType;
@@ -63,6 +64,7 @@ public class TestBedPress {
         private final List<String> unsupportedCalls = new ArrayList<>();
         private final List<String> reposts = new ArrayList<>();
         private String modalId;
+        private Modal modalDefinition;
 
         synchronized void reply(String text) {
             if (text != null && !text.isBlank()) replies.add(text);
@@ -74,6 +76,15 @@ public class TestBedPress {
 
         synchronized void modal(String id) {
             modalId = id;
+        }
+
+        synchronized void modal(Modal modal) {
+            modalId = modal.getId();
+            modalDefinition = modal;
+        }
+
+        public synchronized Modal modalDefinition() {
+            return modalDefinition;
         }
 
         synchronized void reposted(String jumpUrl) {
@@ -112,7 +123,11 @@ public class TestBedPress {
         }
     }
 
-    record Repost(MessageChannel channel, String seatName) {}
+    record Repost(MessageChannel channel, String seatName, boolean diagnosticLabel) {
+        Repost(MessageChannel channel, String seatName) {
+            this(channel, seatName, true);
+        }
+    }
 
     record Found(Message message, Button button, int otherMatches) {}
 
@@ -383,8 +398,30 @@ public class TestBedPress {
         return new ButtonInteractionEvent(jda, 0, self[0]);
     }
 
-    private static Object answerInteraction(
-            ButtonInteraction self,
+    static final class ReplyState {
+        private boolean separateReply;
+
+        ReplyState(boolean separateReply) {
+            this.separateReply = separateReply;
+        }
+    }
+
+    static ButtonInteractionEvent humanEvent(
+            Message message, Button button, Member member, Recorder recorder, @Nullable Repost repost) {
+        ReplyState state = new ReplyState(false);
+        ButtonInteraction[] self = new ButtonInteraction[1];
+        self[0] = (ButtonInteraction) Proxy.newProxyInstance(
+                ButtonInteraction.class.getClassLoader(),
+                new Class<?>[] {ButtonInteraction.class},
+                (proxy, method, args) ->
+                        answerInteraction(self[0], method, args, message, button, member, recorder, repost, state));
+        var event = new ButtonInteractionEvent(message.getJDA(), 0, self[0]);
+        state.separateReply = ti4.discord.interactions.listeners.ButtonListener.shouldShowBotIsThinking(event);
+        return event;
+    }
+
+    static Object answerInteraction(
+            Interaction self,
             Method method,
             Object[] args,
             Message message,
@@ -393,7 +430,25 @@ public class TestBedPress {
             Recorder recorder,
             @Nullable Repost repost)
             throws Throwable {
+        return answerInteraction(self, method, args, message, button, developer, recorder, repost, null);
+    }
+
+    static Object answerInteraction(
+            Interaction self,
+            Method method,
+            Object[] args,
+            Message message,
+            Button button,
+            Member developer,
+            Recorder recorder,
+            @Nullable Repost repost,
+            @Nullable ReplyState state)
+            throws Throwable {
         String name = method.getName();
+        if (state != null) {
+            if ("deferReply".equals(name)) state.separateReply = true;
+            if ("deferEdit".equals(name)) state.separateReply = false;
+        }
         return switch (name) {
             case "getButton", "getComponent" -> button;
             case "getComponentId", "getCustomId" -> button.getCustomId();
@@ -424,9 +479,9 @@ public class TestBedPress {
                 message.getInteractionMetadata() == null
                         ? null
                         : message.getInteractionMetadata().getIntegrationOwners();
-            case "getHook" -> hook(self, message, recorder, repost);
+            case "getHook" -> hook(self, message, recorder, repost, state);
             case "replyModal" -> {
-                recorder.modal(((Modal) args[0]).getId());
+                recorder.modal((Modal) args[0]);
                 yield noOpAction(method.getReturnType(), message.getJDA(), recorder);
             }
             case "toString" -> "TestBedButtonInteraction[" + button.getCustomId() + "]";
@@ -440,7 +495,7 @@ public class TestBedPress {
                     recorder.unsupported(name);
                 }
                 if (createsMessage(method, repost)) {
-                    InteractionHook replyHook = hook(self, message, recorder, repost);
+                    InteractionHook replyHook = hook(self, message, recorder, repost, state);
                     yield capturingAction(method.getReturnType(), message.getJDA(), recorder, repost, replyHook);
                 }
                 yield defaultValue(method, message.getJDA(), recorder);
@@ -449,7 +504,11 @@ public class TestBedPress {
     }
 
     private static InteractionHook hook(
-            ButtonInteraction interaction, Message message, Recorder recorder, @Nullable Repost repost) {
+            Interaction interaction,
+            Message message,
+            Recorder recorder,
+            @Nullable Repost repost,
+            @Nullable ReplyState state) {
         JDA jda = message.getJDA();
         InteractionHook[] self = new InteractionHook[1];
         self[0] = (InteractionHook) Proxy.newProxyInstance(
@@ -463,6 +522,18 @@ public class TestBedPress {
                     if ("toString".equals(name)) return "TestBedInteractionHook";
                     if ("hashCode".equals(name)) return System.identityHashCode(proxy);
                     if ("equals".equals(name)) return args[0] == proxy;
+                    if (state != null && state.separateReply) {
+                        if (name.startsWith("editOriginal")) {
+                            return editSeparateReply(method, args, message, recorder, repost);
+                        }
+                        if ("deleteOriginal".equals(name)) {
+                            return noOpAction(method.getReturnType(), jda, recorder);
+                        }
+                        if ("retrieveOriginal".equals(name)) {
+                            recorder.unsupported("retrieving a virtual interaction reply");
+                            return noOpAction(method.getReturnType(), jda, recorder);
+                        }
+                    }
                     if (isMessageEdit(name)) return editRealMessage(method, args, message, recorder);
                     if ("deleteOriginal".equals(name)) return message.delete();
                     if ("retrieveOriginal".equals(name)) {
@@ -478,6 +549,36 @@ public class TestBedPress {
                     return defaultValue(method, jda, recorder);
                 });
         return self[0];
+    }
+
+    private static Object editSeparateReply(
+            Method method, @Nullable Object[] args, Message message, Recorder recorder, @Nullable Repost repost)
+            throws Throwable {
+        recordText(recorder, args);
+        if (repost == null) return noOpAction(method.getReturnType(), message.getJDA(), recorder);
+        Object action = capturingAction(method.getReturnType(), message.getJDA(), recorder, repost, null);
+        String setter =
+                switch (method.getName()) {
+                    case "editOriginal" -> args[0] instanceof MessageEditData ? null : "setContent";
+                    case "editOriginalComponents" -> "setComponents";
+                    case "editOriginalEmbeds" -> "setEmbeds";
+                    case "editOriginalAttachments" -> "setAttachments";
+                    default -> null;
+                };
+        if (args != null && args.length == 1 && args[0] instanceof MessageEditData data) {
+            var edit = (net.dv8tion.jda.api.utils.messages.MessageEditRequest<?>) action;
+            edit.setContent(data.getContent());
+            edit.setEmbeds(data.getEmbeds());
+            edit.setComponents(data.getComponents());
+        } else if (setter != null) {
+            Method target = MethodUtils.getMatchingAccessibleMethod(
+                    net.dv8tion.jda.api.utils.messages.MessageEditRequest.class, setter, method.getParameterTypes());
+            if (target == null) recorder.unsupported(method.getName());
+            else invoke(target, action, args);
+        } else {
+            recorder.unsupported(method.getName());
+        }
+        return action;
     }
 
     private static boolean createsMessage(Method method, @Nullable Repost repost) {
@@ -547,9 +648,11 @@ public class TestBedPress {
     @Nullable
     private static Message repostIfItHasComponents(MessageCreateBuilder builder, Repost repost, Recorder recorder) {
         if (builder.getComponents().isEmpty()) return null;
-        String header = "-# 🧪 test bed: shown only to " + repost.seatName() + " in a real game";
+        String header = repost.diagnosticLabel()
+                ? "-# 🧪 test bed: shown only to " + repost.seatName() + " in a real game"
+                : "";
         String content = builder.getContent();
-        String withHeader = content.isEmpty() ? header : header + "\n" + content;
+        String withHeader = header.isEmpty() ? content : content.isEmpty() ? header : header + "\n" + content;
         if (withHeader.length() <= Message.MAX_CONTENT_LENGTH) builder.setContent(withHeader);
         try {
             Message message = repost.channel().sendMessage(builder.build()).complete();

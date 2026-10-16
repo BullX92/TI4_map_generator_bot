@@ -590,6 +590,12 @@ public class JdaService {
         bothelperRoles.add(jda.getRoleById("1527947912108183686")); // niugnip's Server
 
         bothelperRoles.removeIf(Objects::isNull);
+
+        ConfiguredDiscordRoles.addTo(jda, adminRoles, System.getenv("DISCORD_ADMIN_ROLE_IDS"));
+        ConfiguredDiscordRoles.addTo(jda, developerRoles, System.getenv("DISCORD_DEVELOPER_ROLE_IDS"));
+        ConfiguredDiscordRoles.addTo(jda, bothelperRoles, System.getenv("DISCORD_BOTHELPER_ROLE_IDS"));
+        developerRoles.addAll(adminRoles);
+        bothelperRoles.addAll(developerRoles);
     }
 
     public static String getBotId() {
