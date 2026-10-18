@@ -83,7 +83,8 @@ public final class WebPlayerButtonPress {
 
     static TestBedPress.Outcome outcome(
             InteractionProcessingResult result, boolean handlerFailed, TestBedPress.Recorder recorder) {
-        if (handlerFailed || result == InteractionProcessingResult.FAILED) return TestBedPress.Outcome.HANDLER_FAILED;
+        if (handlerFailed || recorder.transportFailed() || result == InteractionProcessingResult.FAILED)
+            return TestBedPress.Outcome.HANDLER_FAILED;
         return switch (result) {
             case COMPLETED -> TestBedPress.outcome(false, recorder);
             case UNROUTED -> TestBedPress.Outcome.NOT_FOUND;

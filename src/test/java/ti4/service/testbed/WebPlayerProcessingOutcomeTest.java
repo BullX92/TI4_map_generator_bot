@@ -3,6 +3,7 @@ package ti4.service.testbed;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.RETURNS_SELF;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -179,6 +180,15 @@ class WebPlayerProcessingOutcomeTest extends BaseTi4Test {
             when(message.getId()).thenReturn("789");
             when(message.getComponentTree()).thenReturn(MessageComponentTree.of());
             when(message.reply(any(CharSequence.class))).thenReturn(mock(MessageCreateAction.class, RETURNS_SELF));
+            var cardsInfo = mock(net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel.class);
+            doReturn(cardsInfo).when(player).getCardsInfoThread();
+            var privateSend = mock(MessageCreateAction.class);
+            var privateReply = mock(Message.class);
+            when(privateReply.getId()).thenReturn("9001");
+            when(privateReply.getJumpUrl()).thenReturn("https://discord.com/channels/1/2/9001");
+            when(privateSend.complete()).thenReturn(privateReply);
+            when(cardsInfo.sendMessage(any(net.dv8tion.jda.api.utils.messages.MessageCreateData.class)))
+                    .thenReturn(privateSend);
         }
 
         private TestBedPress.PressResult press(String id) {

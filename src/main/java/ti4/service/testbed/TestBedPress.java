@@ -36,6 +36,7 @@ import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import net.dv8tion.jda.api.utils.messages.MessageCreateRequest;
 import net.dv8tion.jda.api.utils.messages.MessageEditData;
+import net.dv8tion.jda.api.utils.messages.MessageEditRequest;
 import org.apache.commons.lang3.function.Consumers;
 import org.apache.commons.lang3.reflect.MethodUtils;
 import ti4.discord.interactions.buttons.ButtonProcessor;
@@ -65,6 +66,16 @@ public class TestBedPress {
         private final List<String> reposts = new ArrayList<>();
         private String modalId;
         private Modal modalDefinition;
+        private boolean transportFailed;
+
+        synchronized void transportFailed(Throwable error) {
+            transportFailed = true;
+            unsupported("private interaction reply failed: " + error.getClass().getSimpleName());
+        }
+
+        synchronized boolean transportFailed() {
+            return transportFailed;
+        }
 
         synchronized void reply(String text) {
             if (text != null && !text.isBlank()) replies.add(text);
@@ -400,6 +411,8 @@ public class TestBedPress {
 
     static final class ReplyState {
         private boolean separateReply;
+        private boolean acknowledged = true;
+        private final WebInteractionReplies replies = new WebInteractionReplies();
 
         ReplyState(boolean separateReply) {
             this.separateReply = separateReply;
@@ -409,6 +422,7 @@ public class TestBedPress {
     static ButtonInteractionEvent humanEvent(
             Message message, Button button, Member member, Recorder recorder, @Nullable Repost repost) {
         ReplyState state = new ReplyState(false);
+        state.acknowledged = !button.getCustomId().contains("~MDL");
         ButtonInteraction[] self = new ButtonInteraction[1];
         self[0] = (ButtonInteraction) Proxy.newProxyInstance(
                 ButtonInteraction.class.getClassLoader(),
@@ -466,7 +480,8 @@ public class TestBedPress {
             case "getMember" -> developer;
             case "getGuild" -> message.getGuild();
             case "getJDA" -> message.getJDA();
-            case "isFromGuild", "isFromAttachedGuild", "isAcknowledged" -> true;
+            case "isFromGuild", "isFromAttachedGuild" -> true;
+            case "isAcknowledged" -> state == null || state.acknowledged;
             case "getTypeRaw" -> InteractionType.COMPONENT.getKey();
             case "getType" -> InteractionType.COMPONENT;
             case "getToken" -> "test-bed";
@@ -482,17 +497,42 @@ public class TestBedPress {
             case "getHook" -> hook(self, message, recorder, repost, state);
             case "replyModal" -> {
                 recorder.modal((Modal) args[0]);
+                if (state != null)
+                    yield state.replies.acknowledge(
+                            method.getReturnType(), message.getJDA(), recorder, null, () -> state.acknowledged = true);
                 yield noOpAction(method.getReturnType(), message.getJDA(), recorder);
             }
             case "toString" -> "TestBedButtonInteraction[" + button.getCustomId() + "]";
             case "hashCode" -> System.identityHashCode(self);
             case "equals" -> args[0] == self;
             default -> {
+                if (state != null && MessageEditRequest.class.isAssignableFrom(method.getReturnType())) {
+                    if (method.isDefault()) yield InvocationHandler.invokeDefault(self, method, args);
+                    state.separateReply = false;
+                    yield state.replies.editSource(
+                            method.getReturnType(),
+                            message,
+                            recorder,
+                            hook(self, message, recorder, repost, state),
+                            () -> state.acknowledged = true);
+                }
                 if (isMessageEdit(name)) yield editRealMessage(method, args, message, recorder);
                 if (method.isDefault()) yield InvocationHandler.invokeDefault(self, method, args);
                 recordText(recorder, args);
                 if (!name.startsWith("reply") && !name.startsWith("defer") && !name.startsWith("edit")) {
                     recorder.unsupported(name);
+                }
+                if (state != null && MessageCreateRequest.class.isAssignableFrom(method.getReturnType())) {
+                    state.separateReply = true;
+                    InteractionHook replyHook = hook(self, message, recorder, repost, state);
+                    yield state.replies.create(
+                            method.getReturnType(),
+                            message.getJDA(),
+                            recorder,
+                            repost,
+                            replyHook,
+                            true,
+                            () -> state.acknowledged = true);
                 }
                 if (createsMessage(method, repost)) {
                     InteractionHook replyHook = hook(self, message, recorder, repost, state);
@@ -524,20 +564,25 @@ public class TestBedPress {
                     if ("equals".equals(name)) return args[0] == proxy;
                     if (state != null && state.separateReply) {
                         if (name.startsWith("editOriginal")) {
-                            return editSeparateReply(method, args, message, recorder, repost);
+                            return state.replies.edit(method, args, message.getJDA(), recorder, repost);
                         }
                         if ("deleteOriginal".equals(name)) {
-                            return noOpAction(method.getReturnType(), jda, recorder);
+                            return state.replies.delete(method.getReturnType(), jda, recorder);
                         }
                         if ("retrieveOriginal".equals(name)) {
-                            recorder.unsupported("retrieving a virtual interaction reply");
-                            return noOpAction(method.getReturnType(), jda, recorder);
+                            return state.replies.retrieve(method.getReturnType(), jda, recorder);
                         }
                     }
                     if (isMessageEdit(name)) return editRealMessage(method, args, message, recorder);
                     if ("deleteOriginal".equals(name)) return message.delete();
                     if ("retrieveOriginal".equals(name)) {
                         return message.getChannel().retrieveMessageById(message.getId());
+                    }
+                    if (state != null && MessageCreateRequest.class.isAssignableFrom(method.getReturnType())) {
+                        Object action = state.replies.create(
+                                method.getReturnType(), jda, recorder, repost, null, state.separateReply);
+                        if (!seed(action, method, args)) recordText(recorder, args);
+                        return action;
                     }
                     if (createsMessage(method, repost)) {
                         Object action = capturingAction(method.getReturnType(), jda, recorder, repost, null);
@@ -549,36 +594,6 @@ public class TestBedPress {
                     return defaultValue(method, jda, recorder);
                 });
         return self[0];
-    }
-
-    private static Object editSeparateReply(
-            Method method, @Nullable Object[] args, Message message, Recorder recorder, @Nullable Repost repost)
-            throws Throwable {
-        recordText(recorder, args);
-        if (repost == null) return noOpAction(method.getReturnType(), message.getJDA(), recorder);
-        Object action = capturingAction(method.getReturnType(), message.getJDA(), recorder, repost, null);
-        String setter =
-                switch (method.getName()) {
-                    case "editOriginal" -> args[0] instanceof MessageEditData ? null : "setContent";
-                    case "editOriginalComponents" -> "setComponents";
-                    case "editOriginalEmbeds" -> "setEmbeds";
-                    case "editOriginalAttachments" -> "setAttachments";
-                    default -> null;
-                };
-        if (args != null && args.length == 1 && args[0] instanceof MessageEditData data) {
-            var edit = (net.dv8tion.jda.api.utils.messages.MessageEditRequest<?>) action;
-            edit.setContent(data.getContent());
-            edit.setEmbeds(data.getEmbeds());
-            edit.setComponents(data.getComponents());
-        } else if (setter != null) {
-            Method target = MethodUtils.getMatchingAccessibleMethod(
-                    net.dv8tion.jda.api.utils.messages.MessageEditRequest.class, setter, method.getParameterTypes());
-            if (target == null) recorder.unsupported(method.getName());
-            else invoke(target, action, args);
-        } else {
-            recorder.unsupported(method.getName());
-        }
-        return action;
     }
 
     private static boolean createsMessage(Method method, @Nullable Repost repost) {

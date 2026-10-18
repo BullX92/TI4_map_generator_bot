@@ -106,8 +106,17 @@ class WebPlayerButtonPressTest {
         Message message = mock(Message.class);
         when(message.getJDA()).thenReturn(mock(JDA.class));
         var recorder = new TestBedPress.Recorder();
+        var privateChannel = mock(net.dv8tion.jda.api.entities.channel.middleman.MessageChannel.class);
+        var create = mock(net.dv8tion.jda.api.requests.restaction.MessageCreateAction.class);
+        when(privateChannel.sendMessage(any(net.dv8tion.jda.api.utils.messages.MessageCreateData.class)))
+                .thenReturn(create);
+        when(create.complete()).thenReturn(mock(Message.class));
         var event = TestBedPress.humanEvent(
-                message, Button.secondary("showGameAgain", "Refresh"), mock(Member.class), recorder, null);
+                message,
+                Button.secondary("showGameAgain", "Refresh"),
+                mock(Member.class),
+                recorder,
+                new TestBedPress.Repost(privateChannel, "sol", false));
         event.getHook().editOriginal("Your private result").queue();
         verify(message, never()).editMessage(any(CharSequence.class));
         assertEquals(List.of("Your private result"), recorder.replies());
