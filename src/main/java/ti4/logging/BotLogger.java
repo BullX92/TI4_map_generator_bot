@@ -388,8 +388,8 @@ public class BotLogger {
             botLogWebhookURL =
                     channel.createWebhook("AsyncTI4 BotLogger").complete().getUrl();
             GlobalSettings.setSetting(ImplementedSettings.BOT_LOG_WEBHOOK_URL, botLogWebhookURL);
-            System.out.println("Created bot-log webhook successfully: " + botLogWebhookURL);
-            info("Created bot-log webhook successfully: " + botLogWebhookURL);
+            System.out.println("Created bot-log webhook successfully.");
+            info("Created bot-log webhook successfully.");
         } catch (Exception e) {
             botLogWebhookURL = null;
             System.out.println("ERROR: Failed to create bot-log webhook. Exception: " + e.getMessage());
