@@ -11,6 +11,7 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import org.springframework.stereotype.Service;
 import ti4.discord.JdaService;
 import ti4.discord.utility.DiscordErrorUtility;
+import ti4.game.persistence.GameManager;
 import ti4.service.game.GameNameService;
 import ti4.spring.context.SpringContext;
 
@@ -38,7 +39,8 @@ public class WrapperMessageIndex {
     }
 
     public void capture(Message message) {
-        if (JdaService.jda == null
+        if (!GameManager.isGameNamesLoaded()
+                || JdaService.jda == null
                 || message.isEphemeral()
                 || !message.getAuthor()
                         .getId()

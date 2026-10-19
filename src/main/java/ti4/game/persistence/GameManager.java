@@ -94,6 +94,10 @@ public class GameManager {
         GameDatabaseSyncPipeline.queueDelete(gameName);
     }
 
+    public static boolean isGameNamesLoaded() {
+        return gameNamesLoadedLatch.getCount() == 0;
+    }
+
     public static boolean isValid(String gameName) {
         waitFor(gameNamesLoadedLatch);
         return gameName != null && gameNames.contains(gameName);

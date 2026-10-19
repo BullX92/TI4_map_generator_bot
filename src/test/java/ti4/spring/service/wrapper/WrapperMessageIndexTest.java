@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
@@ -25,9 +26,38 @@ import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.requests.RestAction;
 import org.junit.jupiter.api.Test;
 import ti4.discord.JdaService;
+import ti4.game.persistence.GameManager;
 import ti4.service.game.GameNameService;
 
 class WrapperMessageIndexTest {
+    @Test
+    void startupMessagesDoNotWaitForGameNamesOrAccessStorage() {
+        JDA previous = JdaService.jda;
+        JDA jda = mock(JDA.class);
+        SelfUser bot = mock(SelfUser.class);
+        when(bot.getId()).thenReturn("bot");
+        when(jda.getSelfUser()).thenReturn(bot);
+        JdaService.jda = jda;
+        Message message = mock(Message.class);
+        var channel = mock(MessageChannelUnion.class);
+        when(message.getAuthor()).thenReturn(bot);
+        when(message.getChannel()).thenReturn(channel);
+        var repository = mock(WrapperMessageRepository.class);
+        var cursors = mock(WrapperChannelRepository.class);
+        try (var gameManager = mockStatic(GameManager.class);
+                var names = mockStatic(GameNameService.class)) {
+            names.when(() -> GameNameService.getGameNameFromChannel(channel))
+                    .thenThrow(new AssertionError("Startup must not resolve game names before they are loaded"));
+
+            new WrapperMessageIndex(repository, cursors).capture(message);
+
+            names.verifyNoInteractions();
+            verifyNoInteractions(repository, cursors);
+        } finally {
+            JdaService.jda = previous;
+        }
+    }
+
     @Test
     void oldOffersAndOfflineEditsRemainDiscoverableAcrossHistoryPagesAndRestart() {
         JDA previous = JdaService.jda;
@@ -80,10 +110,15 @@ class WrapperMessageIndexTest {
             positions.put(row.getChannelId(), row);
             return row;
         });
-        try (var names = mockStatic(GameNameService.class)) {
+        try (var gameManager = mockStatic(GameManager.class);
+                var names = mockStatic(GameNameService.class)) {
             names.when(() -> GameNameService.getGameNameFromChannel(channel)).thenReturn("game");
             when(request.complete()).thenReturn(all.subList(0, 100), all.subList(100, 200), all.subList(200, 220));
             var index = new WrapperMessageIndex(repository, cursors);
+            index.capture(oldest);
+            assertThat(rows).isEmpty();
+
+            gameManager.when(GameManager::isGameNamesLoaded).thenReturn(true);
             assertThat(index.offeredMessages("game", channel)).containsExactly(oldest);
 
             // The old message gains its first button while gateway events are unavailable.
