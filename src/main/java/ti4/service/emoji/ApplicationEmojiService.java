@@ -40,7 +40,11 @@ public final class ApplicationEmojiService {
     }
 
     public static void uploadNewEmojis() {
-        initAll();
+        if (!spoofing) {
+            resetCacheFromDiscord();
+            cacheInitialized = true;
+        }
+        initFileData();
         List<EmojiFileData> newEmojis = emojiFiles.values().stream()
                 .filter(data -> !emojis.containsKey(data.getName()))
                 .toList();
