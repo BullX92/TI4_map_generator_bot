@@ -21,6 +21,12 @@ curl --fail http://127.0.0.1:18081/api/public/ready
 
 Die API ist zunächst nur am lokalen Netzwerkinterface erreichbar. Öffentlicher Zugriff erfolgt später über den geprüften Zugang mit Anmeldung. PostgreSQL veröffentlicht keinen Host-Port. Der Compose-Projektname isoliert Netzwerk und Volumes; kein fester Containername kollidiert mit bestehenden Diensten.
 
+## Weboberfläche im Heimnetz
+
+Für die vorhandene Original-Weboberfläche `WRAPPER_WEB_IMAGE` auf den geprüften SHA-Tag setzen und mit `docker compose --profile web up -d` starten. Standardmäßig lauscht auch diese Oberfläche nur auf `127.0.0.1`. Für den freigegebenen Heimnetzzugang `WRAPPER_WEB_BIND_ADDRESS` auf die konkrete Heimnetzadresse des Hosts setzen, beispielsweise `192.168.0.69`. Die API bleibt auf Loopback und wird über den Webcontainer weitergeleitet.
+
+`DISCORD_REDIRECT_URI` muss dann genau zur Webadresse passen, beispielsweise `http://192.168.0.69:18082/login`. Dieselbe Adresse im Discord Developer Portal unter **OAuth2 → Redirects** eintragen. Die Anmeldung ist erst nach diesem Schritt und einem echten Browser-Test nachgewiesen.
+
 `ping` zeigt nur, ob HTTP antwortet. `ready` und ein echter Spielzug müssen zusätzlich geprüft werden. Für den Spielnachweis eine private Partie anlegen, eine Originalaktion ausführen, den Server mit `docker compose restart server` neu starten und die Partie erneut öffnen. Discord-Zugangsdaten sind dafür erforderlich.
 
 ## Was dauerhaft gespeichert wird

@@ -59,7 +59,7 @@ services:
       server:
         condition: service_started
     ports:
-      - "127.0.0.1:${WRAPPER_WEB_PORT:-18082}:8080"
+      - "${WRAPPER_WEB_BIND_ADDRESS:-127.0.0.1}:${WRAPPER_WEB_PORT:-18082}:8080"
     environment:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
