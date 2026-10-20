@@ -40,6 +40,7 @@ import ti4.service.game.GameNameService;
 import ti4.service.testbed.TestBedService;
 import ti4.service.testbed.WebPlayerButtonPress;
 import ti4.spring.service.deploy.ActiveLeaseService;
+import ti4.spring.service.wrapper.WrapperDisplayContent;
 import ti4.spring.service.wrapper.WrapperMessageIndex;
 
 @Service
@@ -58,7 +59,12 @@ public class WrapperInteractionService {
             int maxValues,
             String placeholder) {}
 
-    public record OfferedMessage(String id, String channelId, String content, List<Action> actions) {}
+    public record OfferedMessage(
+            String id,
+            String channelId,
+            String content,
+            List<Action> actions,
+            List<WrapperDisplayContent.Image> images) {}
 
     public record Observation(String gameName, String seat, String phase, int round, List<OfferedMessage> messages) {}
 
@@ -126,7 +132,7 @@ public class WrapperInteractionService {
                         actions.add(new Action(
                                 actionId(message, button.getCustomId()),
                                 offer.token(),
-                                button.getLabel(),
+                                WrapperDisplayContent.buttonLabel(button),
                                 button.getStyle().name(),
                                 "BUTTON",
                                 List.of(),
@@ -158,9 +164,13 @@ public class WrapperInteractionService {
                                 menu.getMaxValues(),
                                 menu.getPlaceholder()));
                     }
-                    if (!actions.isEmpty()) {
-                        messages.add(
-                                new OfferedMessage(message.getId(), channel.getId(), message.getContentRaw(), actions));
+                    if (!actions.isEmpty() || WrapperDisplayContent.isMiltyInformation(message)) {
+                        messages.add(new OfferedMessage(
+                                message.getId(),
+                                channel.getId(),
+                                message.getContentRaw(),
+                                actions,
+                                WrapperDisplayContent.images(message)));
                     }
                 }
             }

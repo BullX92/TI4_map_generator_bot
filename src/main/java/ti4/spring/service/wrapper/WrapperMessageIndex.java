@@ -47,7 +47,7 @@ public class WrapperMessageIndex {
                         .equals(JdaService.jda.getSelfUser().getId())) return;
         String gameName = GameNameService.getGameNameFromChannel(message.getChannel());
         if (gameName == null) return;
-        if (message.getComponentTree().findAll(ActionComponent.class).isEmpty()) {
+        if (!isVisibleMessage(message)) {
             remove(message.getId());
             return;
         }
@@ -91,9 +91,14 @@ public class WrapperMessageIndex {
                     continue;
                 }
             }
-            if (!message.getComponentTree().findAll(ActionComponent.class).isEmpty()) offered.add(message);
+            if (isVisibleMessage(message)) offered.add(message);
         }
         return offered;
+    }
+
+    private static boolean isVisibleMessage(Message message) {
+        return !message.getComponentTree().findAll(ActionComponent.class).isEmpty()
+                || WrapperDisplayContent.isMiltyInformation(message);
     }
 
     private void catchUp(MessageChannel channel) {

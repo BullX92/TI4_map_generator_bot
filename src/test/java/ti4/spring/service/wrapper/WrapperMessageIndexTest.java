@@ -31,6 +31,65 @@ import ti4.service.game.GameNameService;
 
 class WrapperMessageIndexTest {
     @Test
+    void originalMiltySummaryAndSliceImageRemainVisibleWithoutButtons() {
+        JDA previous = JdaService.jda;
+        JDA jda = mock(JDA.class);
+        SelfUser bot = mock(SelfUser.class);
+        when(bot.getId()).thenReturn("bot");
+        when(jda.getSelfUser()).thenReturn(bot);
+        JdaService.jda = jda;
+        var channel = mock(MessageChannelUnion.class);
+        when(channel.getId()).thenReturn("channel");
+        when(channel.getType()).thenReturn(ChannelType.TEXT);
+        var history = mock(MessageHistory.class);
+        when(channel.getHistory()).thenReturn(history);
+        RestAction<List<Message>> request = mock(RestAction.class);
+        when(history.retrievePast(100)).thenReturn(request);
+        when(request.complete()).thenReturn(List.of());
+        Message summary = mock(Message.class);
+        Message image = mock(Message.class);
+        Message ordinary = mock(Message.class);
+        int number = 0;
+        for (Message message : List.of(summary, image, ordinary)) {
+            when(message.getId()).thenReturn(Integer.toString(++number));
+            when(message.getChannel()).thenReturn(channel);
+            when(message.getAuthor()).thenReturn(bot);
+            when(message.getComponentTree()).thenReturn(MessageComponentTree.of());
+        }
+        when(summary.getContentRaw()).thenReturn("# **__Draft Picks So Far__**:\nBullX: Slice A");
+        when(image.getContentRaw()).thenReturn("");
+        Message.Attachment attachment = mock(Message.Attachment.class);
+        when(attachment.getFileName()).thenReturn("pbd1_miltydraft_20261020.webp");
+        when(attachment.getUrl()).thenReturn("https://cdn.discordapp.com/attachments/1/2/pbd1_miltydraft.webp");
+        when(attachment.isImage()).thenReturn(true);
+        when(image.getAttachments()).thenReturn(List.of(attachment));
+        when(ordinary.getContentRaw()).thenReturn("An ordinary game message");
+        var repository = mock(WrapperMessageRepository.class);
+        var cursors = mock(WrapperChannelRepository.class);
+        Map<String, WrapperMessageEntity> rows = new HashMap<>();
+        when(repository.save(any())).thenAnswer(call -> {
+            WrapperMessageEntity row = call.getArgument(0);
+            rows.put(row.getMessageId(), row);
+            return row;
+        });
+        when(repository.findByGameNameAndChannelIdOrderByMessageIdDesc("game", "channel"))
+                .thenAnswer(ignored -> new ArrayList<>(rows.values()));
+        try (var gameManager = mockStatic(GameManager.class);
+                var names = mockStatic(GameNameService.class)) {
+            gameManager.when(GameManager::isGameNamesLoaded).thenReturn(true);
+            names.when(() -> GameNameService.getGameNameFromChannel(channel)).thenReturn("game");
+            var index = new WrapperMessageIndex(repository, cursors);
+            index.capture(summary);
+            index.capture(image);
+            index.capture(ordinary);
+            assertThat(index.offeredMessages("game", channel)).containsExactlyInAnyOrder(summary, image);
+            assertThat(rows).containsOnlyKeys("1", "2");
+        } finally {
+            JdaService.jda = previous;
+        }
+    }
+
+    @Test
     void startupMessagesDoNotWaitForGameNamesOrAccessStorage() {
         JDA previous = JdaService.jda;
         JDA jda = mock(JDA.class);
