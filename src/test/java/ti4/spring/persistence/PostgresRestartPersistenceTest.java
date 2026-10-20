@@ -1,6 +1,7 @@
 package ti4.spring.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.UUID;
@@ -27,10 +28,63 @@ import ti4.spring.service.persistence.PlayerEntity;
 import ti4.spring.service.persistence.TitleEntity;
 import ti4.spring.service.persistence.UserEntity;
 import ti4.spring.service.persistence.UserEntityRepository;
+import ti4.spring.service.wrapper.WrapperCreationOperation;
+import ti4.spring.service.wrapper.WrapperCreationOperations;
 import ti4.spring.service.wrapper.WrapperMessageIndex;
 
 @EnabledIfEnvironmentVariable(named = "TI4_TEST_POSTGRES_URL", matches = ".+")
 class PostgresRestartPersistenceTest {
+
+    @Test
+    void creationReservationSurvivesRestartAndCannotBeOverwrittenByDuplicateInsert() {
+        String actor = "creation-" + UUID.randomUUID();
+        String request = "request-1";
+        String name = "reserved-" + UUID.randomUUID();
+        var initial = new WrapperCreationOperation(
+                actor + ":" + request, actor, request, "payload-hash", name, "stopped-process", "CREATING");
+        try {
+            try (ConfigurableApplicationContext writer = context()) {
+                var operations = writer.getBean(WrapperCreationOperations.class);
+                assertThat(operations.save(initial).getVersion()).isNotNull();
+                assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                                .isActualTransactionActive())
+                        .isFalse();
+            }
+            try (ConfigurableApplicationContext reader = context()) {
+                var operations = reader.getBean(WrapperCreationOperations.class);
+                var restored = operations.find(actor, request).orElseThrow();
+                assertThat(restored.getGameName()).isEqualTo(name);
+                assertThat(restored.getPayloadHash()).isEqualTo("payload-hash");
+                assertThat(restored.getState()).isEqualTo("CREATING");
+                assertThat(operations.isReserved(name)).isTrue();
+                var duplicate = new WrapperCreationOperation(
+                        actor + ":" + request,
+                        actor,
+                        request,
+                        "changed-payload",
+                        name + "-replacement",
+                        "new-process",
+                        "CREATING");
+                assertThatThrownBy(() -> operations.save(duplicate))
+                        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+                assertThat(operations.find(actor, request).orElseThrow().getPayloadHash())
+                        .isEqualTo("payload-hash");
+                assertThat(operations.save(restored.withState("NEEDS_REPAIR")).getState())
+                        .isEqualTo("NEEDS_REPAIR");
+            }
+            try (ConfigurableApplicationContext reader = context()) {
+                var operations = reader.getBean(WrapperCreationOperations.class);
+                assertThat(operations.find(actor, request).orElseThrow().getState())
+                        .isEqualTo("NEEDS_REPAIR");
+                assertThat(operations.find("different-actor", request)).isEmpty();
+            }
+        } finally {
+            try (ConfigurableApplicationContext cleanup = context()) {
+                new JdbcTemplate(cleanup.getBean(javax.sql.DataSource.class))
+                        .update("delete from wrapper_game_creation where actor_id = ?", actor);
+            }
+        }
+    }
 
     @Test
     void offeredMessageIndexSurvivesRestartAndKeepsMoreThanOneHistoryPage() {
@@ -149,6 +203,11 @@ class PostgresRestartPersistenceTest {
     })
     @EntityScan(basePackages = {"ti4.spring.service.persistence", "ti4.spring.service.wrapper"})
     @EnableJpaRepositories(basePackages = {"ti4.spring.service.persistence", "ti4.spring.service.wrapper"})
-    @Import({GameEntityPersistenceService.class, PersistedGameStateService.class, WrapperMessageIndex.class})
+    @Import({
+        GameEntityPersistenceService.class,
+        PersistedGameStateService.class,
+        WrapperMessageIndex.class,
+        WrapperCreationOperations.class
+    })
     static class PersistenceConfig {}
 }
