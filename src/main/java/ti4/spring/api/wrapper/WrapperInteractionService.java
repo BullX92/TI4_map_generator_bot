@@ -37,6 +37,7 @@ import ti4.game.Game;
 import ti4.game.Player;
 import ti4.game.persistence.GameManager;
 import ti4.service.game.GameNameService;
+import ti4.service.testbed.ManagedSeats;
 import ti4.service.testbed.TestBedService;
 import ti4.service.testbed.WebPlayerButtonPress;
 import ti4.spring.service.deploy.ActiveLeaseService;
@@ -418,7 +419,9 @@ public class WrapperInteractionService {
         var managed = GameManager.getManagedGame(gameName);
         if (managed == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown game.");
         Game game = managed.getGame();
-        if (game == null || TestBedService.isTestBed(game)) {
+        if (game == null
+                || (TestBedService.isTestBed(game) && !ManagedSeats.canUseHumanBridge(game))
+                || (ManagedSeats.isManaged(game) && !ManagedSeats.canUseHumanBridge(game))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "A regular human game is required.");
         }
         return game;
@@ -426,7 +429,8 @@ public class WrapperInteractionService {
 
     private static Player player(Game game, String userId) {
         Player player = game.getPlayer(userId);
-        if (player == null) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not occupy a seat.");
+        if (player == null || ManagedSeats.isAgent(game, player))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not occupy a human seat.");
         return player;
     }
 

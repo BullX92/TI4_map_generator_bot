@@ -38,6 +38,32 @@ import ti4.testUtils.BaseTi4Test;
 
 class VirtualSeatTransportProofTest extends BaseTi4Test {
     @Test
+    void managedAgentUsesOriginalStrategyHandlerWithoutPersistentHumanImpersonation() {
+        try (Fixture f = new Fixture()) {
+            List<Player> agents = new java.util.ArrayList<>(List.of(f.a, f.b));
+            for (int index = 3; index <= 5; index++) {
+                agents.add(f.game.addPlayer(TestBedService.VIRTUAL_SEAT_ID_PREFIX + "0" + index, "Agent " + index));
+            }
+            ManagedSeats.register(f.game, "123", agents);
+            Button button = Helper.getRemainingSCButtons(f.game, f.a).stream()
+                    .filter(candidate -> "FFCC_sol_scPick_1".equals(candidate.getCustomId()))
+                    .findFirst()
+                    .orElseThrow();
+            var result = ManagedSeats.asAgent(
+                    f.game,
+                    f.developer,
+                    f.a,
+                    () -> WebPlayerButtonPress.press(f.game, f.developer, f.a, f.message, button));
+            assertEquals(TestBedPress.Outcome.PRESSED, result.outcome());
+            assertEquals(java.util.Set.of(1), f.a.getSCs());
+            assertTrue(f.b.getSCs().isEmpty());
+            assertTrue(f.human.getSCs().isEmpty());
+            assertSame(f.human, ManagedSeats.resolve(f.game, "123", f.human));
+            assertNull(TestBedService.getActingAs(f.game, "123"));
+        }
+    }
+
+    @Test
     void originalStrategyCardPickChangesOnlyVirtualSeatAndRestoresPriorActingAs() {
         try (Fixture f = new Fixture()) {
             assertTrue(f.a.isRealPlayer());

@@ -9,7 +9,10 @@ import ti4.discord.JdaService;
 import ti4.discord.interactions.commands.CommandHelper;
 import ti4.discord.interactions.commands.ParentCommand;
 import ti4.discord.interactions.commands.Subcommand;
+import ti4.game.persistence.GameManager;
 import ti4.logging.BotLogger;
+import ti4.service.game.GameNameService;
+import ti4.service.testbed.ManagedSeats;
 import ti4.service.testbed.TestBedService;
 
 public class TestBedCommand implements ParentCommand {
@@ -38,6 +41,15 @@ public class TestBedCommand implements ParentCommand {
     @Override
     public boolean accept(SlashCommandInteractionEvent event) {
         if (!ParentCommand.super.accept(event) || !CommandHelper.acceptIfHasRoles(event, JdaService.developerRoles)) {
+            return false;
+        }
+        String gameName = GameNameService.getGameNameFromChannel(event);
+        var managed = gameName == null ? null : GameManager.getManagedGame(gameName);
+        if (managed != null && ManagedSeats.isManaged(managed.getGame())) {
+            event.getHook()
+                    .editOriginal(
+                            "Managed agent games use their own controls; diagnostic testbed commands are disabled.")
+                    .queue(Consumers.nop(), BotLogger::catchRestError);
             return false;
         }
         if (!TestBedService.isEnabled()) {

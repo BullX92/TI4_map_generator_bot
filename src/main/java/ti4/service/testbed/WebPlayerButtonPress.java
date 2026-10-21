@@ -68,7 +68,7 @@ public final class WebPlayerButtonPress {
     private static TestBedPress.PressResult result(
             TestBedSyncMessage synced, TestBedPress.Recorder recorder, InteractionProcessingResult processingResult) {
         boolean settled = synced.awaitPendingEdits(Duration.ofSeconds(15));
-        TestBedPress.Outcome outcome = outcome(processingResult, synced.handlerFailed(), recorder);
+        TestBedPress.Outcome outcome = outcome(processingResult, synced.handlerFailed() || !settled, recorder);
         String detail =
                 switch (processingResult) {
                     case COMPLETED ->
@@ -168,11 +168,13 @@ public final class WebPlayerButtonPress {
     }
 
     static void validateActor(Game game, Member member, Player player, Button button) {
+        boolean managed = ManagedSeats.canUseHumanBridge(game);
+        boolean agent = managed && member != null && ManagedSeats.isActing(game, member.getId(), player);
         if (member == null
                 || player == null
-                || !member.getId().equals(player.getUserID())
-                || game.getPlayer(member.getId()) != player
-                || TestBedService.isTestBed(game)) {
+                || (!agent && (!member.getId().equals(player.getUserID()) || game.getPlayer(member.getId()) != player))
+                || (ManagedSeats.isManaged(game) && !managed)
+                || (TestBedService.isTestBed(game) && !managed)) {
             throw new IllegalArgumentException("A regular game and the authenticated player's own seat are required.");
         }
         if (ComponentIdEnvelope.decode(button.getCustomId()).spoofedFaction() != null) {

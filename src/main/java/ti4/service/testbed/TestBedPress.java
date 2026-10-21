@@ -285,6 +285,7 @@ public class TestBedPress {
     }
 
     public static PressResult press(Game game, Member developer, Player seat, Message message, Button button) {
+        if (ManagedSeats.isManaged(game)) throw new IllegalArgumentException("Managed games reject diagnostic presses");
         String developerId = developer.getId();
         Recorder recorder = new Recorder();
         TestBedSyncMessage synced = new TestBedSyncMessage(message);

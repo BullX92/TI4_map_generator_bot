@@ -56,6 +56,9 @@ public class TestBedService {
     }
 
     public static void markAsTestBed(Game game, boolean testBed) {
+        if (!testBed && ManagedSeats.isManaged(game)) {
+            throw new IllegalArgumentException("Managed agent games cannot disable their seat transport");
+        }
         if (testBed) {
             store(game, TEST_BED_KEY, "true");
         } else {
@@ -96,6 +99,7 @@ public class TestBedService {
 
     @Nullable
     public static String destructiveCommandRefusal(@Nullable Guild guild, Game game, Collection<Player> players) {
+        if (ManagedSeats.isManaged(game)) return "Refused: managed agent game.";
         if (allowsRealPlayers(game)) {
             return "Refused: this game was enabled with real players. Run `/testbed disable` first.";
         }
@@ -146,6 +150,8 @@ public class TestBedService {
     }
 
     public static void setActingAs(Game game, String userId, @Nullable Player seat) {
+        if (ManagedSeats.isManaged(game))
+            throw new IllegalArgumentException("Managed game rejects diagnostic acting-as");
         if (seat == null) {
             game.removeStoredValue(ACTING_AS_PREFIX + userId);
         } else {
@@ -166,6 +172,8 @@ public class TestBedService {
     }
 
     public static void followTurn(Game game, String userId) {
+        if (ManagedSeats.isManaged(game))
+            throw new IllegalArgumentException("Managed game rejects diagnostic acting-as");
         store(game, ACTING_AS_PREFIX + userId, FOLLOW_TURN);
     }
 
@@ -225,6 +233,7 @@ public class TestBedService {
             @Nullable String channelId,
             @Nullable Player defaultPlayer,
             boolean component) {
+        if (ManagedSeats.isManaged(game)) return ManagedSeats.resolve(game, userId, defaultPlayer);
         if (!isTestBed(game) || !isDeveloper(member) || !actAsApplies(game, component)) return defaultPlayer;
         return resolveForDeveloper(game, userId, channelId, defaultPlayer);
     }

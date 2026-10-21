@@ -21,9 +21,12 @@ import ti4.AsyncTI4DiscordBot;
 import ti4.discord.JdaService;
 import ti4.discord.utility.DiscordChannelUtility;
 import ti4.game.Game;
+import ti4.game.Player;
 import ti4.game.persistence.GameManager;
 import ti4.service.async.ReserveGameNumberService;
 import ti4.service.game.CreateGameService;
+import ti4.service.testbed.ManagedSeats;
+import ti4.service.testbed.TestBedService;
 import ti4.spring.service.deploy.ActiveLeaseService;
 import ti4.spring.service.wrapper.WrapperCreationOperation;
 import ti4.spring.service.wrapper.WrapperCreationOperations;
@@ -32,7 +35,11 @@ import ti4.spring.service.wrapper.WrapperCreationOperations;
 public class WrapperGameCreationService {
     public record EligibleMember(String id, String name) {}
 
-    public record Options(boolean canCreate, List<EligibleMember> members) {}
+    public record Options(boolean canCreate, List<EligibleMember> members, boolean canCreateAgents) {
+        public Options(boolean canCreate, List<EligibleMember> members) {
+            this(canCreate, members, false);
+        }
+    }
 
     public record Operation(String requestId, String gameName, String state, String message) {}
 
@@ -53,7 +60,7 @@ public class WrapperGameCreationService {
                     .map(member -> new EligibleMember(member.getId(), member.getEffectiveName()))
                     .sorted(Comparator.comparing(EligibleMember::name).thenComparing(EligibleMember::id))
                     .toList();
-            return new Options(true, members);
+            return new Options(true, members, TestBedService.isEnabled() && TestBedService.isDeveloper(actor));
         } catch (RuntimeException failure) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Own-server member list unavailable");
         }
@@ -70,10 +77,21 @@ public class WrapperGameCreationService {
     }
 
     public Operation create(String actorId, String requestId, String title, List<String> memberIds) {
+        return create(actorId, requestId, title, memberIds, 0);
+    }
+
+    public Operation create(String actorId, String requestId, String title, List<String> memberIds, int botCount) {
         Member actor = requireAdministrator(actorId);
         requireLease();
         String normalizedTitle = validate(requestId, title, memberIds, actorId);
-        String hash = hash(normalizedTitle, memberIds);
+        if (botCount != 0 && (botCount != 5 || memberIds.size() != 1)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Agent games require you and five agents");
+        }
+        if (botCount > 0 && (!TestBedService.isEnabled() || !TestBedService.isDeveloper(actor))) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "Agent transport requires enabled testbed and developer role");
+        }
+        String hash = hash(botCount == 0 ? normalizedTitle : normalizedTitle + "|agents=5", memberIds);
         var previous = operations.find(actorId, requestId);
         if (previous.isPresent()) {
             if (!hash.equals(previous.get().getPayloadHash())) {
@@ -161,6 +179,7 @@ public class WrapperGameCreationService {
                         members, replyChannel, normalizedTitle, gameName, actor, category, this::requireLease);
                 if (game == null) throw new IllegalStateException("Original creation incomplete");
                 verifyAccess(game, guild, members);
+                if (botCount > 0) provisionAgents(game, actorId);
                 requireLease();
                 GameManager.save(game, "Created game channels through own web wrapper");
                 requireLease();
@@ -181,6 +200,33 @@ public class WrapperGameCreationService {
         Permission.MESSAGE_SEND, Permission.MESSAGE_SEND_IN_THREADS, Permission.MESSAGE_HISTORY,
         Permission.MESSAGE_EMBED_LINKS, Permission.MESSAGE_ATTACH_FILES, Permission.PIN_MESSAGES
     };
+
+    private void provisionAgents(Game game, String actorId) {
+        List<Player> agents = new ArrayList<>();
+        for (int index = 1; index <= 5; index++) {
+            agents.add(game.addPlayer(TestBedService.VIRTUAL_SEAT_ID_PREFIX + "0" + index, "Agent " + index));
+        }
+        ManagedSeats.register(game, actorId, agents);
+        game.setPlayerCountForMap(6);
+        game.setStrategyCardsPerPlayer(1);
+        game.setVp(10);
+        game.setMapTemplateID("6pStandard");
+        GameManager.save(game, "Registered managed virtual seats");
+        for (Player agent : agents) {
+            requireLease();
+            var cards = agent.createCardsInfoThread();
+            if (cards == null
+                    || cards.isPublic()
+                    || cards.isInvitable()
+                    || !game.getActionsChannel()
+                            .getId()
+                            .equals(cards.getParentChannel().getId())) {
+                throw new IllegalStateException("Invalid agent private cards channel");
+            }
+            agent.sendCardsInfoThreadGreeting(cards);
+            GameManager.save(game, "Created managed agent private cards channel");
+        }
+    }
 
     private static void preflight(Guild guild) {
         if (!CreateGameService.isGameCreationAllowed() || !CreateGameService.serverCanHostNewGame(guild)) {

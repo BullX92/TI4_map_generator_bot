@@ -12,7 +12,7 @@ import ti4.spring.context.RequestContext;
 @RestController
 @ConditionalOnProperty(name = "ti4.wrapper.enabled", havingValue = "true")
 public class WrapperGameCreationController {
-    public record CreationRequest(String requestId, String title, List<String> memberIds) {}
+    public record CreationRequest(String requestId, String title, List<String> memberIds, Integer botCount) {}
 
     private final WrapperGameCreationService creation;
 
@@ -27,7 +27,12 @@ public class WrapperGameCreationController {
 
     @PostMapping("/api/wrapper/games")
     public WrapperGameCreationService.Operation create(@RequestBody CreationRequest request) {
-        return creation.create(RequestContext.getUserId(), request.requestId(), request.title(), request.memberIds());
+        return creation.create(
+                RequestContext.getUserId(),
+                request.requestId(),
+                request.title(),
+                request.memberIds(),
+                request.botCount() == null ? 0 : request.botCount());
     }
 
     @GetMapping("/api/wrapper/game-creation/{requestId}")
