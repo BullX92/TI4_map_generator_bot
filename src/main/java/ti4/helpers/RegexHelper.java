@@ -1,5 +1,6 @@
 package ti4.helpers;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -11,6 +12,7 @@ import ti4.game.Leader;
 import ti4.game.Player;
 import ti4.helpers.Units.UnitState;
 import ti4.helpers.Units.UnitType;
+import ti4.image.BoardPosition;
 import ti4.image.Mapper;
 import ti4.image.PositionMapper;
 import ti4.image.TileHelper;
@@ -18,6 +20,11 @@ import ti4.service.fow.FOWPlusService;
 
 @UtilityClass
 public class RegexHelper {
+    /**
+     * Matches the boundary (0-width position) between a digit & a non-digit character in either direction.
+     * For example, "123abc456def".split(DIGIT_BOUNDARY) == ["123", "abc", "456", "def"]
+     */
+    public static final String DIGIT_BOUNDARY = "(?<=\\D)(?=\\d)|(?<=\\d)(?=\\D)";
 
     private static String regexBuilder(String groupname, Collection<String> options) {
         return "(?<" + groupname + ">(" + String.join("|", options) + "))";
@@ -166,7 +173,9 @@ public class RegexHelper {
 
     /** @return group matching any legal tile position in the bot */
     public static String posRegex(String group) {
-        return regexBuilder(group, PositionMapper.getTilePositions());
+        List<String> positions = new ArrayList<>(PositionMapper.getTilePositions());
+        positions.add(BoardPosition.REGEX);
+        return regexBuilder(group, positions);
     }
 
     /** @return group "pos" matching any legal tile position in the bot */
@@ -278,8 +287,7 @@ public class RegexHelper {
         } else {
             allACs.addAll(Mapper.getActionCards().keySet());
         }
-        allACs.addAll(
-                player.getActionCards().values().stream().map(Object::toString).toList());
+        allACs.addAll(player.getActionCards().keySet());
         return regexBuilder("ac", allACs);
     }
 

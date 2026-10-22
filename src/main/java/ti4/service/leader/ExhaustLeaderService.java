@@ -1,6 +1,9 @@
 package ti4.service.leader;
 
 import lombok.experimental.UtilityClass;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.revenant.RevenantBreakthroughHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.revenant.RevenantTechHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.revenant.RevenantUnitsHandler;
 import ti4.game.Game;
 import ti4.game.Leader;
 import ti4.game.Player;
@@ -31,6 +34,17 @@ public class ExhaustLeaderService {
                             game, leaderModel, false, true, false, false, game.isTwilightsFallMode()));
         } else {
             MessageHelper.sendMessageToChannel(player.getCorrectChannel(), message + leader.getId());
+        }
+
+        if (Constants.AGENT.equals(leader.getType())) {
+            boolean isRevenantRisingAttachedAgent =
+                    RevenantBreakthroughHandler.isRevenantRisingAttachedAgent(game, player, leader);
+            if (!isRevenantRisingAttachedAgent && player.hasUnit("revenant_mech")) {
+                RevenantUnitsHandler.doRevenantMechCheck(game, player);
+            }
+            if (!isRevenantRisingAttachedAgent) {
+                RevenantTechHandler.getProduceShipsInSystemsWithShipsButtons(game, player);
+            }
         }
 
         if (tgCount != null) {
@@ -71,5 +85,6 @@ public class ExhaustLeaderService {
                             + " You are encouraged to ping the table and ask for any *Shatter*s if this genome is important, and likely to be _Shatter_'d."
                             + " Otherwise, just assume no _Shatter_ and fix later if necessary.");
         }
+        RevenantBreakthroughHandler.exhaustRevenantRisingForAttachedAgent(game, player, leader);
     }
 }

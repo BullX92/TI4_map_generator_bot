@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -242,7 +243,7 @@ class UnitRenderGenerator {
                         && !IronAbilitiesHandler.isExoAtmosphericMech(player, unitKey.unitType());
                 wrongPlace &= !unitModel.getIsStructure() || !player.hasAbility("miniaturization");
                 if (wrongPlace) {
-                    String badPath = resourceHelper.getPositionFile(
+                    String badPath = ResourceHelper.getPositionFile(
                             "badpos_" + (bulkUnitCount != null ? "tkn_" : "") + unitKey.asyncID() + ".png");
                     BufferedImage badPositionImage =
                             scale == 1.0f ? ImageHelper.read(badPath) : ImageHelper.readScaled(badPath, scale);
@@ -585,7 +586,7 @@ class UnitRenderGenerator {
                 unitTokenPosition);
     }
 
-    private void drawBulkUnitCount(Graphics g, int count, Color color, Color stroke, ImagePosition imagePos) {
+    private static void drawBulkUnitCount(Graphics g, int count, Color color, Color stroke, ImagePosition imagePos) {
         g.setFont(count > 9 ? Storage.getFont28() : Storage.getFont24());
         int offsetX = numberPositionPoint.x + (count > 9 ? 5 : 0);
         int offsetY = numberPositionPoint.y + (count > 9 ? 5 : 0);
@@ -611,22 +612,18 @@ class UnitRenderGenerator {
             UnitType unitType,
             int amt) {
         int imageDmgX, imageDmgY;
+        Point adjustedUnitPos = TileGenerator.offsetTokenPositionForTokenPlanets(unitPos, unitHolder, tile);
 
         if (unitType == UnitType.Infantry || unitType == UnitType.Fighter) {
-            imageDmgX = getCenteredDamageX(unitPos, imagePos, unitImage, galvTag);
-            imageDmgY = getCenteredDamageY(unitPos, imagePos, unitImage, galvTag);
+            imageDmgX = getCenteredDamageX(adjustedUnitPos, imagePos, unitImage, galvTag);
+            imageDmgY = getCenteredDamageY(adjustedUnitPos, imagePos, unitImage, galvTag);
             imageDmgX += 33;
             imageDmgY -= 15;
         } else {
-            imageDmgX = getCenteredDamageX(unitPos, imagePos, unitImage, galvTag);
-            imageDmgY = getCenteredDamageY(unitPos, imagePos, unitImage, galvTag);
+            imageDmgX = getCenteredDamageX(adjustedUnitPos, imagePos, unitImage, galvTag);
+            imageDmgY = getCenteredDamageY(adjustedUnitPos, imagePos, unitImage, galvTag);
             imageDmgX += 5;
             imageDmgY -= 20;
-        }
-
-        if (ctx.isTokenPlanet) {
-            imageDmgX -= TILE_PADDING;
-            imageDmgY -= TILE_PADDING;
         }
 
         imageDmgX += TILE_PADDING;
@@ -662,29 +659,29 @@ class UnitRenderGenerator {
         tileGraphics.drawImage(dmgImage, TILE_PADDING + imageDmgX, TILE_PADDING + imageDmgY, null);
     }
 
-    private int getDamageX(Point position, ImagePosition imagePosition, BufferedImage dmgImage) {
+    private static int getDamageX(Point position, ImagePosition imagePosition, BufferedImage dmgImage) {
         return position != null ? position.x : imagePosition.originalX() - dmgImage.getWidth();
     }
 
-    private int getDamageY(Point position, ImagePosition imagePosition, BufferedImage dmgImage) {
+    private static int getDamageY(Point position, ImagePosition imagePosition, BufferedImage dmgImage) {
         return position != null ? position.y : imagePosition.originalY() - dmgImage.getHeight();
     }
 
-    private int getCenteredDamageX(
+    private static int getCenteredDamageX(
             Point position, ImagePosition imagePosition, BufferedImage unitImage, BufferedImage dmgImage) {
         return position != null
                 ? position.x + (unitImage.getWidth() / 2) - (dmgImage.getWidth() / 2)
                 : imagePosition.originalX() - (dmgImage.getWidth() / 2);
     }
 
-    private int getCenteredDamageY(
+    private static int getCenteredDamageY(
             Point position, ImagePosition imagePosition, BufferedImage unitImage, BufferedImage dmgImage) {
         return position != null
                 ? position.y + (unitImage.getHeight() / 2) - (dmgImage.getHeight() / 2)
                 : imagePosition.originalY() - (dmgImage.getHeight() / 2);
     }
 
-    private boolean shouldSkipInvalidUnit(UnitKey unitKey) {
+    private static boolean shouldSkipInvalidUnit(UnitKey unitKey) {
         return unitKey == null || !Mapper.isValidColor(unitKey.getColor());
     }
 
@@ -714,6 +711,7 @@ class UnitRenderGenerator {
         return switch (unitKey.unitType()) {
             case Lady -> unitPath.replace("lady", "fs");
             case Celagrom -> unitPath.replace("celagrom", "fs");
+            case Aurelion -> unitPath.replace("aurelion", "fs");
             case Cavalry -> {
                 boolean hasM2Tech = game.getPNOwner("cavalry") != null
                         && game.getPNOwner("cavalry").hasTech("m2");
@@ -757,6 +755,16 @@ class UnitRenderGenerator {
             String spoopyPath = resourceHelper.getDecalFile(name);
             spoopy = ImageHelper.read(spoopyPath);
         }
+        if (unitKey.unitType() == UnitType.Aurelion) {
+            // Match the flagship-sized transparent decal used by Celagrom.
+            spoopy = new BufferedImage(81, 80, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = spoopy.createGraphics();
+            graphics.rotate(Math.PI / 4, 40, 40);
+            graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 20));
+            DrawingUtil.superDrawString(
+                    graphics, "Aurelion", -1, 45, Color.WHITE, null, null, new BasicStroke(1), Color.BLACK);
+            graphics.dispose();
+        }
         if (unitKey.unitType() == UnitType.Flagship && player.ownsUnit("ghemina_flagship_lord")) {
             String name = "units_ds_ghemina_lord_wht.png";
             String spoopyPath = resourceHelper.getDecalFile(name);
@@ -766,7 +774,7 @@ class UnitRenderGenerator {
         return spoopy;
     }
 
-    private Integer getBulkUnitCount(UnitKey unitKey, int unitCount) {
+    private static Integer getBulkUnitCount(UnitKey unitKey, int unitCount) {
         return Set.of(UnitType.Fighter, UnitType.Infantry).contains(unitKey.unitType()) ? unitCount : null;
     }
 
@@ -783,7 +791,12 @@ class UnitRenderGenerator {
         typeOrder.addAll(List.of(
                 UnitType.Flagship, UnitType.Dreadnought, UnitType.Carrier, UnitType.Cruiser, UnitType.Destroyer));
         typeOrder.addAll(List.of(
-                UnitType.Warsun, UnitType.TyrantsLament, UnitType.Cavalry, UnitType.Lady, UnitType.Celagrom)); // other
+                UnitType.Warsun,
+                UnitType.TyrantsLament,
+                UnitType.Cavalry,
+                UnitType.Lady,
+                UnitType.Celagrom,
+                UnitType.Aurelion)); // other
 
         List<String> playerOrder = unitHolder.getUnitColorsOnHolder();
         if (game.getActivePlayer() != null && !playerOrder.isEmpty()) {
@@ -855,7 +868,7 @@ class UnitRenderGenerator {
         return ctx.unitTokenPosition.getPosition(positionKey);
     }
 
-    private Point calculateSpiralPosition(
+    private static Point calculateSpiralPosition(
             PositioningContext posCtx, int radius, int degree, int degreeChange, List<Rectangle> rectangles) {
         Point centerPosition = posCtx.centerPosition;
         int unitWidth = posCtx.unitImage.getWidth();
@@ -924,7 +937,8 @@ class UnitRenderGenerator {
     private static Point getUnitTagLocation(String unitID) {
         return switch (unitID) {
             case "ws" -> new Point(-10, 45); // War Sun
-            case "fs", "lord", "lady", "tyrantslament", "cavalry", "celagrom" -> new Point(10, 55); // Flagship
+            case "fs", "lord", "lady", "tyrantslament", "cavalry", "celagrom", "aurelion" ->
+                new Point(10, 55); // Flagship
             case "dn" -> new Point(10, 50); // Dreadnought
             case "ca" -> new Point(0, 40); // Cruiser
             case "cv" -> new Point(0, 40); // Carrier

@@ -1,7 +1,6 @@
 package ti4.logging;
 
-import static ti4.helpers.discord.DiscordErrorUtility.isDiscordServerError;
-import static ti4.helpers.discord.DiscordErrorUtility.isIgnorableError;
+import static ti4.discord.utility.DiscordErrorUtility.*;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -133,6 +132,10 @@ public class BotLogger {
      */
     public static void error(@Nonnull String message) {
         logToChannel(null, message, null, LogSeverity.Error);
+    }
+
+    public static void spammyError(@Nonnull String message) {
+        logToChannel(null, message, null, LogSeverity.SpammyError);
     }
 
     public static void critical(@Nonnull String message) {
@@ -303,14 +306,16 @@ public class BotLogger {
                 if (channel == null) {
                     scheduleWebhookMessage(msgChunk); // Send message on webhook
                 } else {
-                    channel.sendMessage(msgChunk).queue(m -> m.createThreadChannel("Stack Trace")
-                            .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
-                            .queue(t -> {
-                                MessageHelper.sendMessageToChannel(t, ExceptionUtils.getStackTrace(err));
-                                t.getManager()
-                                        .setArchived(true)
-                                        .queueAfter(SECONDS_TO_WAIT_BEFORE_QUEUEING_STACKTRACE, TimeUnit.SECONDS);
-                            }));
+                    channel.sendMessage(msgChunk)
+                            .queue(m -> m.createThreadChannel("Stack Trace")
+                                    .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
+                                    .queue(t -> {
+                                        MessageHelper.sendMessageToChannel(t, ExceptionUtils.getStackTrace(err));
+                                        t.getManager()
+                                                .setArchived(true)
+                                                .queueAfter(
+                                                        SECONDS_TO_WAIT_BEFORE_QUEUEING_STACKTRACE, TimeUnit.SECONDS);
+                                    }));
                 }
             }
         }
@@ -383,8 +388,8 @@ public class BotLogger {
             botLogWebhookURL =
                     channel.createWebhook("AsyncTI4 BotLogger").complete().getUrl();
             GlobalSettings.setSetting(ImplementedSettings.BOT_LOG_WEBHOOK_URL, botLogWebhookURL);
-            System.out.println("Created bot-log webhook successfully: " + botLogWebhookURL);
-            info("Created bot-log webhook successfully: " + botLogWebhookURL);
+            System.out.println("Created bot-log webhook successfully.");
+            info("Created bot-log webhook successfully.");
         } catch (Exception e) {
             botLogWebhookURL = null;
             System.out.println("ERROR: Failed to create bot-log webhook. Exception: " + e.getMessage());

@@ -8,12 +8,13 @@ import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import org.apache.commons.lang3.function.Consumers;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.tyris.RewriteDestinyHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.tyris.TyrisCommanderButtonHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.tyris.TyrisAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.tyris.TyrisLeaderHandler;
 import ti4.game.Game;
 import ti4.game.Player;
 import ti4.helpers.Constants;
 import ti4.helpers.DisplayType;
+import ti4.helpers.FoWHelper;
 import ti4.image.MapRenderPipeline;
 import ti4.image.Mapper;
 import ti4.logging.BotLogger;
@@ -28,6 +29,20 @@ import ti4.service.relic.NeuraloopService;
 @UtilityClass
 public class RevealPublicObjectiveService {
 
+    private static void sendFogObjectiveProgress(Game game, String objectiveId) {
+        if (!FoWHelper.isFogQol01(game)) return;
+        int threshold = ListPlayerInfoService.getObjectiveThreshold(objectiveId, game);
+        PublicObjectiveModel model = Mapper.getPublicObjective(objectiveId);
+        if (threshold <= 0 || model == null) return;
+        for (Player player : game.getRealPlayers()) {
+            int progress =
+                    Math.min(ListPlayerInfoService.getPlayerProgressOnObjective(objectiveId, game, player), threshold);
+            MessageHelper.sendMessageToChannel(
+                    player.getCardsInfoThread(),
+                    "Your progress on **" + model.getName() + "**: " + progress + "/" + threshold + ".");
+        }
+    }
+
     private static final int WHITE_COLOR = 0xFFFFFF;
 
     public static void revealS2(Game game, GenericInteractionCreateEvent event) {
@@ -35,12 +50,17 @@ public class RevealPublicObjectiveService {
     }
 
     public static void revealS2(Game game, GenericInteractionCreateEvent event, boolean random) {
-        Map.Entry<String, Integer> objective;
-        if (random) {
-            objective = game.revealStage2Random();
-        } else {
-            objective = game.revealStage2();
-        }
+        Map.Entry<String, Integer> objective = random ? game.revealStage2Random() : game.revealStage2();
+        handleStage2Revealed(game, event, objective);
+    }
+
+    /** Reveals a stage 2 objective from the deck itself (ignoring the peekable upcoming objectives). */
+    public static void revealS2FromDeck(Game game, GenericInteractionCreateEvent event) {
+        handleStage2Revealed(game, event, game.revealStage2FromDeck());
+    }
+
+    private static void handleStage2Revealed(
+            Game game, GenericInteractionCreateEvent event, Map.Entry<String, Integer> objective) {
         if (objective == null) {
             MessageHelper.sendMessageToChannel(
                     game.getActionsChannel(), "No unrevealed stage 2 public objectives remain.");
@@ -51,10 +71,10 @@ public class RevealPublicObjectiveService {
         NeuraloopService.offerInitialNeuraloopChoice(game, objective.getKey());
         for (Player player : game.getRealPlayers()) {
             if (player.hasAbility("rewrite_destiny")) {
-                RewriteDestinyHandler.offerRewriteDestiny(game, player, objective.getKey(), 2);
+                TyrisAbilityHandler.offerRewriteDestiny(game, player, objective.getKey(), 2);
             }
             if (game.playerHasLeaderUnlockedOrAlliance(player, "tyriscommander")) {
-                TyrisCommanderButtonHandler.offerInfantry(game, player);
+                TyrisLeaderHandler.offerInfantry(game, player);
             }
         }
         var channel = game.getActionsChannel();
@@ -89,6 +109,7 @@ public class RevealPublicObjectiveService {
                 MessageHelper.sendMessageToChannel(
                         channel, ListPlayerInfoService.representScoring(game, objective.getKey(), 0));
             }
+            sendFogObjectiveProgress(game, objective.getKey());
             return;
         }
         // first do cleanup if necessary
@@ -107,6 +128,7 @@ public class RevealPublicObjectiveService {
                 MessageHelper.sendMessageToChannel(
                         channel, ListPlayerInfoService.representScoring(game, objective.getKey(), 0));
             }
+            sendFogObjectiveProgress(game, objective.getKey());
             MessageHelper.sendMessageToChannel(
                     game.getMainGameChannel(), "### " + game.getPing() + " **Status Cleanup Run!**");
             if (!game.isFowMode()) {
@@ -160,7 +182,8 @@ public class RevealPublicObjectiveService {
         if (po == null) {
             Map<String, String> sos = Mapper.getSecretObjectivesJustNames();
             for (Map.Entry<String, String> entry : sos.entrySet()) {
-                if (entry.getValue().equalsIgnoreCase(objective.getKey())) {
+                if (entry.getValue().equalsIgnoreCase(objective.getKey())
+                        && Mapper.getSecretObjective(entry.getKey()).getSource().isOfficial()) {
                     po = Mapper.getSecretObjective(entry.getKey());
                 }
             }
@@ -178,12 +201,23 @@ public class RevealPublicObjectiveService {
     }
 
     public String revealS1(Game game, GenericInteractionCreateEvent event, boolean random) {
-        Map.Entry<String, Integer> objective;
-        if (random) {
-            objective = game.revealStage1Random();
-        } else {
-            objective = game.revealStage1();
+        Map.Entry<String, Integer> objective = random ? game.revealStage1Random() : game.revealStage1();
+        return handleStage1Revealed(game, event, objective);
+    }
+
+    /** Reveals a stage 1 objective from the deck itself (ignoring the peekable upcoming objectives). */
+    public String revealS1FromDeck(Game game, GenericInteractionCreateEvent event) {
+        return handleStage1Revealed(game, event, game.revealStage1FromDeck());
+    }
+
+    private String handleStage1Revealed(
+            Game game, GenericInteractionCreateEvent event, Map.Entry<String, Integer> objective) {
+        if (objective == null) {
+            MessageHelper.sendMessageToChannel(
+                    game.getActionsChannel(), "No unrevealed stage 1 public objectives remain.");
+            return null;
         }
+
         PublicObjectiveModel po = Mapper.getPublicObjective(objective.getKey());
         var channel = game.getActionsChannel();
         MessageHelper.sendMessageToChannel(
@@ -193,10 +227,10 @@ public class RevealPublicObjectiveService {
         NeuraloopService.offerInitialNeuraloopChoice(game, objective.getKey());
         for (Player player : game.getRealPlayers()) {
             if (player.hasAbility("rewrite_destiny")) {
-                RewriteDestinyHandler.offerRewriteDestiny(game, player, objective.getKey(), 1);
+                TyrisAbilityHandler.offerRewriteDestiny(game, player, objective.getKey(), 1);
             }
             if (game.playerHasLeaderUnlockedOrAlliance(player, "tyriscommander")) {
-                TyrisCommanderButtonHandler.offerInfantry(game, player);
+                TyrisLeaderHandler.offerInfantry(game, player);
             }
         }
         if (!"status".equalsIgnoreCase(game.getPhaseOfGame())) {
@@ -204,6 +238,7 @@ public class RevealPublicObjectiveService {
                 MessageHelper.sendMessageToChannel(
                         channel, ListPlayerInfoService.representScoring(game, objective.getKey(), 0));
             }
+            sendFogObjectiveProgress(game, objective.getKey());
             return objective.getKey();
         }
         // first do cleanup if necessary
@@ -222,6 +257,7 @@ public class RevealPublicObjectiveService {
                 MessageHelper.sendMessageToChannel(
                         channel, ListPlayerInfoService.representScoring(game, objective.getKey(), 0));
             }
+            sendFogObjectiveProgress(game, objective.getKey());
             MessageHelper.sendMessageToChannel(
                     game.getMainGameChannel(), "### " + game.getPing() + ", it's time for the Status Cleanup Run!");
             if (!game.isFowMode()) {

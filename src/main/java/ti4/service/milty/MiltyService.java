@@ -33,7 +33,6 @@ import ti4.service.rules.ThundersEdgeRulesService;
 
 @UtilityClass
 public class MiltyService {
-
     public static void offerKeleresSetupButtons(MiltyDraftManager manager, Player player) {
         List<String> flavors = List.of("mentak", "xxcha", "argent");
         List<Button> keleresPresets = new ArrayList<>();
@@ -67,6 +66,10 @@ public class MiltyService {
         // Load the general game settings
         boolean success = game.loadGameSettingsFromSettings(event, settings);
         if (!success) return "Fix the game settings before continuing";
+        game.setStoredValue(
+                Constants.INCLUDE_ECHOES_OF_YGGDRASIL_TILES,
+                Boolean.toString(
+                        settings.getSourceSettings().getEchoesOfYggdrasil().isVal()));
         if (game.isCompetitiveTIGLGame()) {
             TIGLHelper.sendTIGLSetupText(game);
         }
@@ -98,6 +101,7 @@ public class MiltyService {
         }
 
         draftManager.init(sources);
+        EchoesOfYggdrasilService.addTiles(game, draftManager);
         draftManager.setMapTemplate(specs.template.getAlias());
         game.setMapTemplateID(specs.template.getAlias());
         List<String> players = new ArrayList<>(specs.playerIDs);
@@ -176,8 +180,9 @@ public class MiltyService {
         }
 
         game.clearTileMap();
+        boolean mapChanged = false;
         try {
-            MiltyDraftHelper.buildPartialMap(game, event);
+            mapChanged = MiltyDraftHelper.buildPartialMap(game);
         } catch (Exception e) {
             // Ignore
         }
@@ -192,39 +197,48 @@ public class MiltyService {
             specs.presetSlices.forEach(draftManager::addSlice);
             MiltyDraftDisplayService.repostDraftInformation(draftManager, game);
         } else {
-            event.getMessageChannel().sendMessage(startMsg).queue((ignore) -> {
-                boolean slicesCreated = GenerateSlicesService.generateSlices(event, draftManager, specs);
-                if (!slicesCreated) {
-                    String msg = "Generating slices was too hard so I gave up.... Please try again.";
-                    if (specs.numSlices == maxSlices) {
-                        msg += "\n*...and maybe consider asking for fewer slices*";
-                    }
-                    MessageHelper.sendMessageToChannel(event.getMessageChannel(), msg);
-                } else {
-                    MiltyDraftDisplayService.repostDraftInformation(draftManager, game);
-                    for (String player : draftManager.getPlayers()) {
-                        Player p = game.getPlayer(player);
-                        game.setStoredValue(p.getUserID() + "queuedMiltyPick", "");
-                        if (p != draftManager.getCurrentDraftPlayer(game) && p.getCardsInfoThread() != null) {
-                            MessageHelper.sendMessageToChannel(
-                                    p.getCardsInfoThread(),
-                                    p.getRepresentation() + " You can queue your choices with these buttons",
-                                    draftManager.getQueueButtons(p, game));
-                        }
-                    }
-                    game.setPhaseOfGame("miltydraft");
-                    // TODO: We should be locking since we're saving
-                    GameManager.save(game, "Milty");
-                    if (game.isThundersEdge()) {
-                        ThundersEdgeRulesService.alertTabletalkWithRulesAtStartOfDraft(game);
+            MessageHelper.sendMessageToChannel(event.getMessageChannel(), startMsg);
+            GenerateSlicesService.Result result = GenerateSlicesService.generateSlices(event, draftManager, specs);
+            if (result.impossibleReason() != null) {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(), result.impossibleSettingsMessage(specs.numSlices));
+            } else if (!result.slicesCreated()) {
+                String msg = "Generating slices was too hard so I gave up.... Please try again.";
+                if (specs.numSlices == maxSlices) {
+                    msg += "\n*...and maybe consider asking for fewer slices*";
+                }
+                MessageHelper.sendMessageToChannel(event.getMessageChannel(), msg);
+            } else {
+                MiltyDraftDisplayService.repostDraftInformation(draftManager, game);
+
+                game.setPhaseOfGame("miltydraft");
+                for (String player : draftManager.getPlayers()) {
+                    Player p = game.getPlayer(player);
+                    game.setStoredValue(p.getUserID() + "queuedMiltyPick", "");
+                }
+                // SPOOKY SAVE
+                GameManager.save(game, "Milty");
+                if (game.isThundersEdge()) {
+                    ThundersEdgeRulesService.alertTabletalkWithRulesAtStartOfDraft(game);
+                }
+                for (String player : draftManager.getPlayers()) {
+                    Player p = game.getPlayer(player);
+                    if (p != draftManager.getCurrentDraftPlayer(game) && p.getCardsInfoThread() != null) {
+                        MessageHelper.sendMessageToChannel(
+                                p.getCardsInfoThread(),
+                                p.getRepresentation() + " You can queue your choices with these buttons",
+                                draftManager.getQueueButtons(p, game));
                     }
                 }
-            });
+            }
+        }
+        if (mapChanged) {
+            ButtonHelper.updateMap(game, event);
         }
         return null;
     }
 
-    private static void initDraftOrder(MiltyDraftManager draftManager, List<String> playerIDs, boolean staticOrder) {
+    static void initDraftOrder(MiltyDraftManager draftManager, List<String> playerIDs, boolean staticOrder) {
         List<String> players = new ArrayList<>(playerIDs);
         if (!staticOrder) {
             Collections.shuffle(players);
@@ -248,7 +262,7 @@ public class MiltyService {
      * - Per-source constraints cap/guarantee the remaining slots per expansion.
      * - If constraints is null/empty, falls back to the original unconstrained shuffle.
      */
-    private static List<String> createFactionDraft(
+    public static List<String> createFactionDraft(
             int factionCount,
             List<String> factions,
             List<String> firstFactions,
@@ -330,7 +344,7 @@ public class MiltyService {
         return output.subList(0, Math.min(factionCount, output.size()));
     }
 
-    private static ComponentSource logicalFactionSource(ComponentSource source) {
+    static ComponentSource logicalFactionSource(ComponentSource source) {
         return switch (source) {
             case codex1, codex2, codex3, codex4 -> ComponentSource.pok;
             default -> source;
@@ -339,6 +353,7 @@ public class MiltyService {
 
     public static void miltySetup(GenericInteractionCreateEvent event, Game game) {
         MiltySettings menu = game.initializeMiltySettings();
+        menu.setRandomSetup(false);
         // TODO: Settings should use a flag for nucleus generation.
         // But for now, trying to keep our settings changes minimal.
         if (event instanceof ButtonInteractionEvent buttonEvent) {

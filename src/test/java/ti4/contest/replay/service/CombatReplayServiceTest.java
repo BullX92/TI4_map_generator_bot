@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -255,7 +258,45 @@ class CombatReplayServiceTest {
         verifyNoInteractions(observationRepository, candidateRepository);
     }
 
-    private CombatReplayService service(CombatCandidateRepository candidateRepository) {
+    @Test
+    void capturePreInteractionSnapshotSkipsDatabaseForGameWithoutOpenCandidates() {
+        CombatCandidateRepository candidateRepository = mock(CombatCandidateRepository.class);
+        CombatReplayService service = service(candidateRepository);
+        Game game = game("pbd-unregistered");
+
+        CombatReplayService.PreInteractionSnapshot snapshot = service.capturePreInteractionSnapshot(game);
+
+        assertEquals(CombatReplayService.PreInteractionSnapshot.empty(), snapshot);
+        verify(candidateRepository, never()).findByGameNameAndStatusIn(any(), any());
+    }
+
+    @Test
+    void onButtonInteractionSettledSkipsDatabaseForGameWithoutOpenCandidates() {
+        CombatCandidateRepository candidateRepository = mock(CombatCandidateRepository.class);
+        CombatReplayService service = service(candidateRepository);
+        Game game = game("pbd-unregistered");
+
+        service.onButtonInteractionSettled(game, player(game, "sol"), null);
+
+        verifyNoInteractions(candidateRepository);
+    }
+
+    @Test
+    void refreshRegistersOpenCandidateGameAndEmptyQuerySelfHeals() {
+        CombatCandidateRepository candidateRepository = mock(CombatCandidateRepository.class);
+        CombatReplayService service = service(candidateRepository);
+        Game game = game("pbd1");
+        when(candidateRepository.findDistinctGameNamesByStatusIn(any())).thenReturn(List.of("pbd1"));
+        when(candidateRepository.findByGameNameAndStatusIn(any(), any())).thenReturn(List.of());
+
+        service.refreshOpenCandidateGames();
+        service.onButtonInteractionSettled(game, player(game, "sol"), null);
+        service.onButtonInteractionSettled(game, player(game, "sol"), null);
+
+        verify(candidateRepository, times(1)).findByGameNameAndStatusIn(any(), any());
+    }
+
+    private static CombatReplayService service(CombatCandidateRepository candidateRepository) {
         return new CombatReplayService(
                 new CombatContestSettings(),
                 mock(CombatObservationRepository.class),
@@ -266,7 +307,7 @@ class CombatReplayServiceTest {
                 mock(CombatSideBetAvailabilityService.class));
     }
 
-    private CombatObservationEntity observation(
+    private static CombatObservationEntity observation(
             Long id,
             LocalDateTime startedAt,
             String gameName,
@@ -296,26 +337,26 @@ class CombatReplayServiceTest {
         return observation;
     }
 
-    private CombatCandidateEntity candidate(String attackerFaction, String defenderFaction) {
+    private static CombatCandidateEntity candidate(String attackerFaction, String defenderFaction) {
         CombatCandidateEntity candidate = new CombatCandidateEntity();
         candidate.setAttackerFaction(attackerFaction);
         candidate.setDefenderFaction(defenderFaction);
         return candidate;
     }
 
-    private Game game(String name) {
+    private static Game game(String name) {
         Game game = new Game();
         game.setName(name);
         return game;
     }
 
-    private Player player(Game game, String faction) {
+    private static Player player(Game game, String faction) {
         Player player = new Player(faction + "-user", faction, game);
         player.setFaction(faction);
         return player;
     }
 
-    private CombatReplayService.InitialCombatStats initialStats(
+    private static CombatReplayService.InitialCombatStats initialStats(
             double attackerStrength, double defenderStrength, double attackerHp, double defenderHp) {
         return new CombatReplayService.InitialCombatStats(attackerStrength, defenderStrength, attackerHp, defenderHp);
     }

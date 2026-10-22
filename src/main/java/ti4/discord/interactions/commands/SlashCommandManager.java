@@ -30,11 +30,14 @@ import ti4.discord.interactions.commands.help.HelpCommand;
 import ti4.discord.interactions.commands.installation.InstallationCommand;
 import ti4.discord.interactions.commands.lazax.LazaxCommand;
 import ti4.discord.interactions.commands.leaders.LeaderCommand;
+import ti4.discord.interactions.commands.ll.LostLegaciesCommand;
 import ti4.discord.interactions.commands.map.MapCommand;
 import ti4.discord.interactions.commands.milty.MiltyCommand;
+import ti4.discord.interactions.commands.monuments.MonumentsCommand;
 import ti4.discord.interactions.commands.omega_phase.OmegaPhaseCommand;
 import ti4.discord.interactions.commands.planet.PlanetCommand;
 import ti4.discord.interactions.commands.player.PlayerCommand;
+import ti4.discord.interactions.commands.plot.FrankenCommand2;
 import ti4.discord.interactions.commands.relic.RelicCommand;
 import ti4.discord.interactions.commands.rules.RulesCommand;
 import ti4.discord.interactions.commands.search.FindCommand;
@@ -47,6 +50,7 @@ import ti4.discord.interactions.commands.statistics.StatisticsCommand;
 import ti4.discord.interactions.commands.statistics.StatisticsCommand2;
 import ti4.discord.interactions.commands.status.StatusCommand;
 import ti4.discord.interactions.commands.tech.TechCommand;
+import ti4.discord.interactions.commands.testbed.TestBedCommand;
 import ti4.discord.interactions.commands.tf.TwilightFallCommand;
 import ti4.discord.interactions.commands.tigl.TiglCommand;
 import ti4.discord.interactions.commands.tokens.AddCCCommand;
@@ -107,6 +111,7 @@ public class SlashCommandManager {
                     new RulesCommand(),
                     new AdminCommand(),
                     new DeveloperCommand(),
+                    new TestBedCommand(),
                     new BothelperCommand(),
                     new PlayerCommand(),
                     new GameCommand(),
@@ -119,11 +124,13 @@ public class SlashCommandManager {
                     new SpecialCommand(),
                     new Special2Command(),
                     new LeaderCommand(),
+                    new LostLegaciesCommand(),
                     new CombatCommand(),
                     new CustomCommand(),
                     new FOWCommand(),
                     new InstallationCommand(),
                     new MiltyCommand(),
+                    new MonumentsCommand(),
                     new FrankenCommand(),
                     new FrankenDrazCommand(),
                     new CaptureCommand(),
@@ -134,6 +141,7 @@ public class SlashCommandManager {
                     new StatisticsCommand2(),
                     new TechCommand(),
                     new BreakthroughCommand(),
+                    new FrankenCommand2(),
                     new PlanetCommand(),
                     new SelectionBoxDemoCommand(),
                     new UserCommand(),

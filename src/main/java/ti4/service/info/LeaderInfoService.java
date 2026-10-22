@@ -24,7 +24,7 @@ import ti4.service.franken.FrankenAlternateTextService;
 public class LeaderInfoService {
 
     public static void sendLeadersInfo(Game game, Player player, GenericInteractionCreateEvent event) {
-        String headerText = player.getRepresentation() + " Somebody" + CommandHelper.getHeaderText(event);
+        String headerText = player.getRepresentationNoPing() + " Somebody" + CommandHelper.getHeaderText(event);
         MessageHelper.sendMessageToPlayerCardsInfoThread(player, headerText);
         sendLeadersInfo(game, player);
     }
@@ -111,6 +111,28 @@ public class LeaderInfoService {
                     player.getCardsInfoThread(),
                     "**Commanders from " + FactionEmojis.Mahact + " Imperia:**",
                     imperiaEmbeds);
+        }
+
+        List<MessageEmbed> lichEmbeds = new ArrayList<>();
+        Player lichPoolOwner = game.getRevenantCommanderOwner(player);
+        if (lichPoolOwner != null) {
+            for (Player otherPlayer : game.getRealPlayers()) {
+                if (otherPlayer.equals(lichPoolOwner)
+                        || lichPoolOwner.getDebtTokenCount(otherPlayer.getColor(), "lich") < 1) {
+                    continue;
+                }
+
+                Leader commander = game.getRevenantLichCommander(lichPoolOwner, otherPlayer);
+                if (commander != null) {
+                    lichEmbeds.add(Game.getUnlockedLeaderCopy(commander).getLeaderEmbed(game));
+                }
+            }
+        }
+        if (!lichEmbeds.isEmpty()) {
+            MessageHelper.sendMessageToChannelWithEmbeds(
+                    player.getCardsInfoThread(),
+                    "**Commanders from " + FactionEmojis.revenant + " Allure of Darkness:**",
+                    lichEmbeds);
         }
     }
 

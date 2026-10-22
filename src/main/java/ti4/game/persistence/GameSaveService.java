@@ -162,6 +162,9 @@ class GameSaveService {
                 .collect(Collectors.toMap(Entry::getKey, e -> e.getValue().toString())));
         writeCardsStrings(discardStatus, writer, Constants.AC_STATUS);
 
+        writer.write(Constants.AC_PLAYED + " " + String.join(",", game.getPlayedActionCards()));
+        writer.write(System.lineSeparator());
+
         writer.write(Constants.EXPLORE + " " + String.join(",", game.getAllExplores()));
         writer.write(System.lineSeparator());
 
@@ -244,9 +247,9 @@ class GameSaveService {
         writer.write(Constants.AGENDA_VOTE_INFO + " " + sb2);
         writer.write(System.lineSeparator());
 
-        Map<String, String> currentCheckingForAllReacts = game.getStoredValueMap();
+        Map<String, String> storedValueMap = game.getStoredValueMap();
         sb2 = new StringBuilder();
-        for (Map.Entry<String, String> entry : currentCheckingForAllReacts.entrySet()) {
+        for (Map.Entry<String, String> entry : storedValueMap.entrySet()) {
             sb2.append(entry.getKey())
                     .append(",")
                     .append(entry.getValue().replace("\n", ". "))
@@ -405,6 +408,12 @@ class GameSaveService {
         writer.write(System.lineSeparator());
         writer.write(Constants.BUTTON_PRESS_COUNT + " " + game.getButtonPressCount());
         writer.write(System.lineSeparator());
+        writer.write(Constants.EVENT_SEQUENCE_COUNTER + " " + game.getEventSequenceCounter());
+        writer.write(System.lineSeparator());
+        writer.write(Constants.PENDING_SUB_EVENTS_JSON + " " + game.getPendingSubEventsJson());
+        writer.write(System.lineSeparator());
+        writer.write(Constants.PENDING_MOVEMENT_STATE + " " + game.getPendingMovementState());
+        writer.write(System.lineSeparator());
         writer.write(Constants.GAME_CUSTOM_NAME + " " + game.getCustomName());
         writer.write(System.lineSeparator());
 
@@ -546,7 +555,13 @@ class GameSaveService {
         writer.write(System.lineSeparator());
         writer.write(Constants.MONUMENTS_TO_THE_AGES_MODE + " " + game.isMonumentToTheAgesMode());
         writer.write(System.lineSeparator());
+        writer.write(Constants.MONUMENTS_MODE + " " + game.isMonumentsMode());
+        writer.write(System.lineSeparator());
         writer.write(Constants.WEIRD_WORMHOLES_MODE + " " + game.isWeirdWormholesMode());
+        writer.write(System.lineSeparator());
+        writer.write(Constants.COSMIC_CONVERGENCE_MODE + " " + game.isCosmicConvergenceMode());
+        writer.write(System.lineSeparator());
+        writer.write(Constants.MUAAT_MANIA_MODE + " " + game.isMuaatManiaMode());
         writer.write(System.lineSeparator());
         writer.write(Constants.NO_FRACTURE + " " + game.isNoFractureMode());
         writer.write(System.lineSeparator());
@@ -566,6 +581,8 @@ class GameSaveService {
         writer.write(System.lineSeparator());
         writer.write(Constants.VEILED_HEART_MODE + " " + game.isVeiledHeartMode());
         writer.write(System.lineSeparator());
+        writer.write(Constants.LORE_MODE + " " + game.isLoreMode());
+        writer.write(System.lineSeparator());
         writer.write(Constants.LIMITED_WHISPERS_MODE + " " + game.isLimitedWhispersMode());
         writer.write(System.lineSeparator());
         writer.write(Constants.WHISPERS_DISABLED + " " + game.isWhispersDisabled());
@@ -575,6 +592,8 @@ class GameSaveService {
         writer.write(Constants.ORDINIAN_C1_MODE + " " + game.isOrdinianC1Mode());
         writer.write(System.lineSeparator());
         writer.write(Constants.LIBERATION_C4_MODE + " " + game.isLiberationC4Mode());
+        writer.write(System.lineSeparator());
+        writer.write(Constants.ERWANS_GAMBIT_MODE + " " + game.isErwansGambitMode());
         writer.write(System.lineSeparator());
         writer.write(Constants.SHOW_FULL_COMPONENT_TEXT + " " + game.isShowFullComponentTextEmbeds());
         writer.write(System.lineSeparator());
@@ -628,7 +647,12 @@ class GameSaveService {
         writeStrLine(writer, Constants.GENOME_DECK_ID, game.getGenomeSpliceDeckID());
         writeStrLine(writer, Constants.PARADIGM_DECK_ID, game.getParadigmSpliceDeckID());
         writeStrLine(writer, Constants.UNITUPGRADE_DECK_ID, game.getUnitSpliceDeckID());
+        // isTwilightKart is Deprecated. Once removed, remove this line
         writeBoolLine(writer, Constants.TWILIGHT_KART, game.isTwilightKart());
+        writeBoolLine(writer, Constants.TK_DESTROYER_CUP, game.isTkDestroyerCup());
+        writeBoolLine(writer, Constants.TK_NOVA_CUP, game.isTkNovaCup());
+        writeBoolLine(writer, Constants.TF_BR, game.isTfBr());
+        writeBoolLine(writer, Constants.TWILIGHT_DS, game.isTwilightDS());
 
         writer.write(Constants.BAG_DRAFT + " "
                 + (game.getActiveBagDraft() == null
@@ -793,10 +817,18 @@ class GameSaveService {
             writer.write(Constants.FOG_FILTER + " " + fogColor);
             writer.write(System.lineSeparator());
 
+            if (!player.isFogGhostHexes()) {
+                writer.write(Constants.FOG_GHOST_HEXES + " false");
+                writer.write(System.lineSeparator());
+            }
+
             writer.write(Constants.PASSED + " " + player.isPassed());
             writer.write(System.lineSeparator());
 
             writer.write(Constants.READY_TO_PASS_BAG + " " + player.isReadyToPassBag());
+            writer.write(System.lineSeparator());
+
+            writer.write(Constants.OPLUSPLUS_COUNCIL_CONFIRMED + " " + player.isOplusplusCouncilConfirmed());
             writer.write(System.lineSeparator());
 
             writer.write(Constants.AUTO_PASS_WHENS_N_AFTERS + " " + player.isAutoPassOnWhensAfters());
@@ -936,6 +968,8 @@ class GameSaveService {
 
             writer.write(Constants.ABILITIES + " " + String.join(",", player.getAbilities()));
             writer.write(System.lineSeparator());
+            writer.write(Constants.EXHAUSTED_ABILITIES + " " + String.join(",", player.getExhaustedAbilities()));
+            writer.write(System.lineSeparator());
 
             writer.write(Constants.TG + " " + player.getTg());
             writer.write(System.lineSeparator());
@@ -961,6 +995,8 @@ class GameSaveService {
             }
 
             writer.write(Constants.STASIS_INFANTRY + " " + player.getStasisInfantry());
+            writer.write(System.lineSeparator());
+            writer.write(Constants.STASIS_FIGHTERS + " " + player.getStasisFighters());
             writer.write(System.lineSeparator());
             writer.write(Constants.AUTO_SABO_PASS_MEDIAN + " " + player.getAutoSaboPassMedian());
             writer.write(System.lineSeparator());
@@ -1242,6 +1278,10 @@ class GameSaveService {
 
         writer.write(TOKENS);
         writer.write(System.lineSeparator());
+        if (!tile.getFowVisionGrant().isEmpty()) {
+            writer.write(FOW_VISION_GRANT + " " + String.join(",", tile.getFowVisionGrant()));
+            writer.write(System.lineSeparator());
+        }
 
         writer.write(ENDTOKENS);
         writer.write(System.lineSeparator());

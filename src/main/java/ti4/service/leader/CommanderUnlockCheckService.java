@@ -3,12 +3,14 @@ package ti4.service.leader;
 import java.util.List;
 import java.util.Map.Entry;
 import lombok.experimental.UtilityClass;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.LostLegaciesCommanderUnlockHandler;
 import ti4.game.Game;
 import ti4.game.Planet;
 import ti4.game.Player;
 import ti4.game.Tile;
 import ti4.game.UnitHolder;
+import ti4.helpers.BlueReverieHelper;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.ButtonHelperAbilities;
 import ti4.helpers.ButtonHelperAgents;
@@ -16,6 +18,7 @@ import ti4.helpers.ButtonHelperFactionSpecific;
 import ti4.helpers.FoWHelper;
 import ti4.helpers.Helper;
 import ti4.helpers.Units.UnitType;
+import ti4.model.TechnologyModel.TechnologyType;
 import ti4.service.unit.CheckUnitContainmentService;
 
 @UtilityClass
@@ -189,7 +192,7 @@ public class CommanderUnlockCheckService {
             }
             case "obsidian" -> {
                 for (Tile t : game.getTileMap().values()) {
-                    if (t.getPosition().startsWith("frac") && t.containsPlayersUnits(player)) {
+                    if (t.isFracture() && t.containsPlayersUnits(player)) {
                         shouldBeUnlocked = true;
                         break;
                     }
@@ -259,9 +262,12 @@ public class CommanderUnlockCheckService {
 
             // BR
             case "atokera", "belkosea", "pharadn", "qhet", "toldar", "uydai", "kaltrim" -> shouldBeUnlocked = true;
+            case "sarcosa" ->
+                shouldBeUnlocked = game.getPlanetsPlayerIsCoexistingOn(player).size() >= 2;
+            case "xin" -> shouldBeUnlocked = BlueReverieHelper.hasXinCommanderUnlock(player, game);
 
-            // Balacasi
-            case "arvaxi" -> shouldBeUnlocked = true;
+            // Whispers from the Void
+            case "arvaxi", "kalora" -> shouldBeUnlocked = true;
             case "lunarium" ->
                 shouldBeUnlocked = (ButtonHelper.getNumberOfUnitsOnTheBoard(game, player, "carrier", false) >= 4);
             case "tyris" ->
@@ -282,10 +288,72 @@ public class CommanderUnlockCheckService {
             }
 
             // BEANS
-            case "dream" ->
-                shouldBeUnlocked = (DreamButtonHandler.getNexusTokenTiles(game).size() >= 3);
+            case "ashen" -> shouldBeUnlocked = true;
+            case "crystellum" ->
+                shouldBeUnlocked = ButtonHelper.getNumberOfUnitsOnTheBoard(game, player, "fighter", false) >= 12;
+            case "dream" -> {
+                int eligibleSystems = 0;
+                for (Tile tile : game.getTileMap().values()) {
+                    if (!tile.isNebula(game)
+                            && tile.isAnomaly(game, player)
+                            && FoWHelper.playerHasActualShipsInSystem(player, tile)) {
+                        eligibleSystems++;
+                    }
+                }
+
+                shouldBeUnlocked = eligibleSystems >= 2;
+            }
+            case "ta" -> {
+                int eligiblePlanets = 0;
+                for (String planetName : player.getPlanets()) {
+                    Tile tile = game.getTileFromPlanet(planetName);
+                    Planet planet = tile == null ? null : tile.getUnitHolderFromPlanet(planetName);
+
+                    if (planet == null || !TaAbilityHandler.planetHasAnyAttachment(tile, planetName)) {
+                        continue;
+                    }
+
+                    eligiblePlanets++;
+                }
+
+                shouldBeUnlocked = eligiblePlanets >= 4;
+            }
             case "netrunners" ->
-                shouldBeUnlocked = (ButtonHelper.getNumberOfUnitsOnTheBoard(game, player, "pds", false) >= 4);
+                shouldBeUnlocked = TechnologyType.mainFour.stream()
+                        .anyMatch(type -> ButtonHelper.getNumberOfCertainTypeOfTech(player, type) >= 3);
+            case "natau" -> {
+                int qualifyingSystems = 0;
+                for (Tile tile : CheckUnitContainmentService.getTilesContainingPlayersUnits(game, player)) {
+                    if (tile.isAnomaly(game, player)
+                            || FoWHelper.isTileAdjacentToAnAnomaly(game, tile.getPosition(), player)) {
+                        qualifyingSystems++;
+                    }
+                }
+                shouldBeUnlocked = (qualifyingSystems >= 3);
+            }
+
+            // theodisi
+            case "ardentia",
+                    "verydith",
+                    "myrr",
+                    "kairn",
+                    "kryxos",
+                    "arcanum",
+                    "xytheris",
+                    "oblivion",
+                    "revenant",
+                    "revenantponthous",
+                    "revenantoblivion",
+                    "revenantxytheris",
+                    "revenantvanguard",
+                    "revenantveylor",
+                    "thrones",
+                    "ponthous",
+                    "scrapyard",
+                    "morpha",
+                    "thurviali" ->
+                shouldBeUnlocked =
+                        LostLegaciesCommanderUnlockHandler.meetsCommanderUnlockCondition(player, game, faction);
         }
         if (shouldBeUnlocked) {
             UnlockLeaderService.unlockLeader(leaderId, game, player);

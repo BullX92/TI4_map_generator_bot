@@ -38,11 +38,13 @@ import ti4.model.TechnologyModel;
 import ti4.model.UnitModel;
 import ti4.service.emoji.CardEmojis;
 import ti4.service.emoji.UnitEmojis;
+import ti4.service.map.FractureService;
 import ti4.service.regex.RegexService;
 import ti4.service.unit.DestroyUnitService;
 import ti4.service.unit.ParsedUnit;
 
 public final class TeHelperTechs {
+    private static final String BLUE_REVERIE_EXECUTIVE_ORDER = "executiveOrderBr";
 
     // Generic Tech
     @ButtonHandler("useMagenDefense_")
@@ -50,7 +52,8 @@ public final class TeHelperTechs {
         String regex = "useMagenDefense_" + RegexHelper.posRegex(game);
         RegexService.runMatcher(regex, buttonID, matcher -> {
             Tile tile = game.getTileByPosition(matcher.group("pos"));
-            resolveMagen(game, player, tile, false);
+            boolean bulwark = player.hasUnit("tk-blacktrenchbulwark");
+            resolveMagen(game, player, tile, bulwark);
             ButtonHelper.deleteMessage(event);
         });
     }
@@ -448,6 +451,14 @@ public final class TeHelperTechs {
     public static void initializePlanesplitterStep1(Game game, Player player) {
         // When you perform a strategic action, you may move an ingress token into a system that contains or is adjacent
         // to your units.\nThis technology cannot be researched.
+        // Step 1 adds a token and step 2 removes one, so with no Fracture this conjures an ingress from nothing
+        if (!FractureService.isFractureInPlay(game)) {
+            MessageHelper.sendMessageToChannel(
+                    player.getCorrectChannel(),
+                    player.getRepresentation()
+                            + ", The Fracture is not in play, so there are no ingress tokens to move.");
+            return;
+        }
         handlePlanesplitterStep1(game, player, null, "planesplitterStep1_page0");
     }
 
@@ -490,7 +501,7 @@ public final class TeHelperTechs {
         List<Button> buttons = new ArrayList<>();
         if (player.hasUnlockedBreakthrough("cabalbt")) {
             for (Tile tile : game.getTileMap().values()) {
-                if (tile.isGravityRift(game)) {
+                if (tile.isGravityRift(game, player)) {
                     buttons.add(
                             Buttons.blue(prefix + tile.getPosition(), tile.getRepresentationForButtons(game, player)));
                 }
@@ -585,18 +596,29 @@ public final class TeHelperTechs {
         game.setStoredValue("executiveOrder", player.getFaction());
         game.setPhaseOfGame("agenda");
         boolean top = buttonID.contains("top");
+        boolean blueReverieExecutiveOrder = player.hasTech("executiveorder_br");
 
         String msg = game.getPing() + " the " + buttonID.split("_")[1]
                 + " agenda has been revealed with _Executive Order_. ";
 
-        if (game.isFowMode()) {
+        if (blueReverieExecutiveOrder) {
+            msg += game.isFowMode()
+                    ? "The Executive Order owner will vote first."
+                    : player.getRepresentation() + " will vote first.";
+        } else if (game.isFowMode()) {
             msg += "Speaker has been temporarily changed to simulate the effect of the technology.";
         } else {
             msg += player.getRepresentation()
                     + " has been temporarily made speaker to simulate the effect of the technology.";
         }
+
         game.setStoredValue("oldSpeakerExecutiveOrder", game.getSpeakerUserID());
-        game.setSpeaker(player);
+        if (blueReverieExecutiveOrder) {
+            game.setStoredValue(BLUE_REVERIE_EXECUTIVE_ORDER, player.getFaction());
+        } else {
+            game.removeStoredValue(BLUE_REVERIE_EXECUTIVE_ORDER);
+            game.setSpeaker(player);
+        }
 
         MessageHelper.sendMessageToChannel(game.getMainGameChannel(), msg);
         AgendaHelper.revealAgenda(event, !top, game, event.getChannel());

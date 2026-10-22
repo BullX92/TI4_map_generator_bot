@@ -41,6 +41,9 @@ public class SourceSettings extends SettingsMenu {
     private final BooleanSetting teDemo;
     private final BooleanSetting whispers;
     private final BooleanSetting deepreaches;
+    private final BooleanSetting lostLegacies;
+    private final BooleanSetting monuments;
+    private final BooleanSetting echoesOfYggdrasil;
 
     // ---------------------------------------------------------------------------------------------------------------------------------
     // Constructor & Initialization
@@ -69,6 +72,9 @@ public class SourceSettings extends SettingsMenu {
         eronous = new BooleanSetting("Eronous", "Eronous Tiles", false);
         whispers = new BooleanSetting("WhispersVoid", "Whispers from the Void", false);
         deepreaches = new BooleanSetting("DeepReaches", "Deep Reaches", false);
+        lostLegacies = new BooleanSetting("LostLegacies", "Lost Legacies", false);
+        monuments = new BooleanSetting("Monuments", "Monuments+", game.isMonumentsMode());
+        echoesOfYggdrasil = new BooleanSetting("EchoesOfYggdrasil", "Echoes of Yggdrasil", false);
         actionCardDeck2 = new BooleanSetting("ActionCardDeck2", "Action Card Deck 2", game.isAcd2());
         // Emojis
         base.setEmoji(SourceEmojis.TI4BaseGame);
@@ -76,15 +82,22 @@ public class SourceSettings extends SettingsMenu {
         codexes.setEmoji(FactionEmojis.Keleres);
         discoStars.setEmoji(SourceEmojis.DiscordantStars);
         unchartedSpace.setEmoji(SourceEmojis.DiscordantStars);
+        blueReverie.setEmoji(SourceEmojis.BlueReverie);
         absol.setEmoji(SourceEmojis.Absol);
         eronous.setEmoji(SourceEmojis.Eronous);
         actionCardDeck2.setEmoji(SourceEmojis.ActionDeck2);
         deepreaches.setEmoji(SourceEmojis.DeepReaches);
+        lostLegacies.setEmoji(SourceEmojis.Theodisi);
+        monuments.setEmoji(SourceEmojis.Monuments);
 
         // Other Initialization
         discoStars.setExtraInfo("Adds Discordant Stars factions only.");
         blueReverie.setExtraInfo("Adds Blue Reverie factions only.");
         unchartedSpace.setExtraInfo("Adds Uncharted Space content.");
+        lostLegacies.setExtraInfo("Adds Lost Legacies factions only.");
+        monuments.setExtraInfo(
+                "Adds faction monuments plus Monuments action cards, agendas, secrets, and strategy cards.");
+        echoesOfYggdrasil.setExtraInfo("Adds the nine Echoes of Yggdrasil tiles to the draft tile pool.");
         // miltymod.setExtraInfo("NOTE: this is NOT \"milty draft\", this is a homebrew mod that replaces components in
         // the game");
 
@@ -109,6 +122,9 @@ public class SourceSettings extends SettingsMenu {
             eronous.initialize(json.get("eronous"));
             whispers.initialize(json.get("whispers"));
             deepreaches.initialize(json.get("deepreaches"));
+            lostLegacies.initialize(json.get("lostLegacies"));
+            monuments.initialize(json.get("monuments"));
+            echoesOfYggdrasil.initialize(json.get("echoesOfYggdrasil"));
             actionCardDeck2.initialize(json.get("actionCardDeck2"));
         }
         base.setEditable(false);
@@ -133,6 +149,9 @@ public class SourceSettings extends SettingsMenu {
         ls.add(eronous);
         ls.add(whispers);
         ls.add(deepreaches);
+        ls.add(lostLegacies);
+        ls.add(monuments);
+        ls.add(echoesOfYggdrasil);
         ls.add(actionCardDeck2);
         return ls;
     }
@@ -179,8 +198,9 @@ public class SourceSettings extends SettingsMenu {
         if (teDemo.isVal()) sources.add(ComponentSource.thunders_edge);
         if (eronous.isVal()) sources.add(ComponentSource.eronous);
         if (ignis.isVal()) sources.add(ComponentSource.ignis_aurora);
-        if (whispers.isVal()) sources.add(ComponentSource.balacasi);
+        if (whispers.isVal()) sources.add(ComponentSource.wftv);
         if (deepreaches.isVal()) sources.add(ComponentSource.beans);
+        if (lostLegacies.isVal()) sources.add(ComponentSource.theodisi);
         return sources;
     }
 
@@ -282,10 +302,15 @@ public class SourceSettings extends SettingsMenu {
                         .queue(Consumers.nop(), BotLogger::catchRestError);
             }
             case "Eronous" -> {}
+            case "Monuments" -> game.setMonumentsMode(monuments.isVal());
+            case "EchoesOfYggdrasil" ->
+                game.setStoredValue(
+                        ti4.helpers.Constants.INCLUDE_ECHOES_OF_YGGDRASIL_TILES,
+                        Boolean.toString(echoesOfYggdrasil.isVal()));
         }
     }
 
-    private String getAcd2Version(BooleanSetting pok, BooleanSetting teDemo) {
+    private static String getAcd2Version(BooleanSetting pok, BooleanSetting teDemo) {
         // when TE is fully implemented, this needs to check for _pok, _pok_te, or _te.
         String suffix = pok.isVal() ? "_pok" : teDemo.isVal() ? "_te" : "";
         return "action_deck_2" + suffix;

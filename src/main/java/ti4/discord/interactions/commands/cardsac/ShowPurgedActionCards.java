@@ -5,10 +5,13 @@ import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import ti4.discord.interactions.commands.GameStateSubcommand;
 import ti4.game.Game;
+import ti4.game.Player;
+import ti4.helpers.ActionCardHelper;
 import ti4.helpers.Constants;
 import ti4.helpers.Helper;
 import ti4.image.Mapper;
 import ti4.message.MessageHelper;
+import ti4.service.testbed.TestBedService;
 
 class ShowPurgedActionCards extends GameStateSubcommand {
 
@@ -22,10 +25,16 @@ class ShowPurgedActionCards extends GameStateSubcommand {
     }
 
     private static void showPurged(Game game, GenericInteractionCreateEvent event) {
+        Player viewer = TestBedService.resolveActingPlayer(
+                game, event, game.getPlayer(event.getUser().getId()));
+        boolean hideUnplayed = ActionCardHelper.hidesUnplayedDiscards(game, viewer);
         StringBuilder sb = new StringBuilder();
         sb.append("Action card purge list: ").append('\n');
         int index = 1;
         for (Map.Entry<String, Integer> ac : game.getPurgedActionCards().entrySet()) {
+            if (!ActionCardHelper.isDiscardVisible(game, hideUnplayed, ac.getKey())) {
+                continue;
+            }
             sb.append('`')
                     .append(index)
                     .append(".")

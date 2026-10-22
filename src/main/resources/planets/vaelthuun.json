@@ -1,4 +1,12 @@
 {
+    "planetLayout": {
+        "unitHolderName": "vaelthuun",
+        "resourcesLocation": "TopLeft",
+        "centerPosition": {
+            "x": 226,
+            "y": 200
+        }
+    },
     "id": "vaelthuun",
     "tileId": "ba5",
     "name": "Vael Thuun",
@@ -108,5 +116,5 @@
         "removeUnitCoordinate": true
     },
     "contrastColor": "orange",
-    "source": "balacasi"
+    "source": "wftv"
 }

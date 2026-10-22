@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
@@ -22,6 +23,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.ResourceHelper;
 import ti4.discord.JdaService;
+import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.game.Game;
 import ti4.game.Player;
@@ -33,15 +35,15 @@ import ti4.logging.BotLogger;
 import ti4.logging.LogOrigin;
 import ti4.message.MessageHelper;
 import ti4.service.async.ReserveGameNumberService;
+import ti4.service.fow.setup.FowSetupWizardService;
 import ti4.service.game.CreateGameService;
-import ti4.service.game.HomebrewService;
-import ti4.service.option.FOWOptionService.FOWOption;
 
 @UtilityClass
 public class CreateFoWGameService {
 
     private static final int MAX_CHANNELS_MINUS_5 = 495;
     private static final int MAX_ROLE_COUNT = 250;
+    private static final Pattern FOW_GAME_NAME = Pattern.compile("fow[0-9]+");
 
     private static final long PERMISSIONS =
             Permission.PIN_MESSAGES.getRawValue() | Permission.VIEW_CHANNEL.getRawValue();
@@ -163,8 +165,6 @@ public class CreateFoWGameService {
         Game newGame = CreateGameService.createNewGame(gameName, gameOwner);
         newGame.setCustomName(gameFunName);
         newGame.setFowMode(true);
-        newGame.setFowOption(FOWOption.MANAGED_COMMS, true);
-        newGame.setFowOption(FOWOption.ALLOW_AGENDA_COMMS, true);
 
         // ADD PLAYERS
         newGame.addPlayer(gameOwner.getId(), gameOwner.getEffectiveName());
@@ -212,7 +212,17 @@ public class CreateFoWGameService {
         sb = new StringBuilder(roleGM.getAsMention() + " - gm room\n");
         sb.append(getInfoTextFromFile("FoWGMIntro.txt"));
         MessageHelper.sendMessageToChannel(gmChannel, sb.toString());
-        HomebrewService.offerGameHomebrewButtons(gmChannel);
+        MessageHelper.sendMessageToChannelWithButton(
+                gmChannel,
+                "## FoW Setup Wizard\nFor new and old GMs - set up nearly all Fog related things in a "
+                        + "non-obligatory pipeline. Set homebrew, scenarios, deal factions, set player "
+                        + "positions, all in one flow!\n\n### Steps\n"
+                        + FowSetupWizardService.stepOverview(),
+                Buttons.blue("fowSetupOpenWizard", "FoW Setup Wizard"));
+        // The standalone homebrew prompt is redundant now: the wizard's Game Options step covers 11 of the
+        // 14 homebrew options as categorised toggles, and its Game Type step still exposes the full flat
+        // list (including Red Tape / Ignis Aurora / Omega Phase) via the "Supported Homebrew" button.
+        // HomebrewService.offerGameHomebrewButtons(gmChannel);
         GMService.logActivity(
                 newGame,
                 "This thread will log player slash commands and other activities.\n"
@@ -229,6 +239,9 @@ public class CreateFoWGameService {
                 + gmChannel.getAsMention() + "\n" + "> "
                 + actionsChannel.getAsMention() + "\n";
         MessageHelper.sendMessageToChannel(eventChannel, message);
+
+        FogStandardService.apply(newGame);
+        FogStandardService.announce(newGame, gmChannel, actionsChannel);
 
         GameManager.save(newGame, "Create FOW Game Channels");
 
@@ -262,7 +275,7 @@ public class CreateFoWGameService {
     }
 
     private static String getInfoTextFromFile(String file) {
-        String path = ResourceHelper.getInstance().getHelpFile(file);
+        String path = ResourceHelper.getHelpFile(file);
         try {
             return Files.readString(Paths.get(path));
         } catch (Exception e) {
@@ -274,10 +287,12 @@ public class CreateFoWGameService {
         return "fow" + getLastFOWGameNumber();
     }
 
+    public static boolean isFowGameName(String gameName) {
+        return FOW_GAME_NAME.matcher(gameName).matches();
+    }
+
     public static String getNextFOWGameName() {
-        int nextFowNum = getLastFOWGameNumber() + 1;
-        while (ReserveGameNumberService.isGameNumReserved("fow" + nextFowNum)) nextFowNum++;
-        return "fow" + (getLastFOWGameNumber() + 1);
+        return "fow" + ReserveGameNumberService.firstUnreservedNumber("fow", getLastFOWGameNumber() + 1);
     }
 
     private static int getLastFOWGameNumber() {

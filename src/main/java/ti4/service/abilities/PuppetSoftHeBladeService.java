@@ -141,6 +141,7 @@ public class PuppetSoftHeBladeService {
         output.add(flipFirmamentFlagship(player));
         output.add(flipFirmamentPromissoryNote(player));
         output.add(flipFirmamentBreakthrough(player));
+        output.add(flipFirmamentMonument(game, player));
 
         if (!game.isFrankenGame()) {
             output.addAll(replaceFirmamentMetadata(game, player));
@@ -244,13 +245,18 @@ public class PuppetSoftHeBladeService {
     private static List<String> flipFirmamentLeaders(Player player) {
         String fmt = "Successfully replaced %s with %s.";
         List<String> output = new ArrayList<>();
-        player.getLeaderByID("firmamentagent").ifPresent(oldLeader -> {
+        if (player.getGame().isFrankenGame()
+                ? player.hasLeader("firmamentagent")
+                : player.getLeaderByID("firmamentagent").isPresent()) {
+            Leader oldLeader = player.getGame().isFrankenGame()
+                    ? player.unsafeGetLeader("firmamentagent")
+                    : player.getLeaderByID("firmamentagent").orElse(null);
             player.removeLeader(oldLeader);
             Leader newLeader = new Leader("obsidianagent");
             player.addLeader(newLeader);
             replaceAppliedFrankenItemAliases(player, DraftCategory.AGENT, "firmamentagent", "obsidianagent");
             output.add(String.format(fmt, oldLeader.getName(), newLeader.getName()));
-        });
+        }
         player.getLeaderByID("firmamentcommander").ifPresent(oldLeader -> {
             player.removeLeader(oldLeader);
             Leader newLeader = new Leader("obsidiancommander");
@@ -294,6 +300,15 @@ public class PuppetSoftHeBladeService {
         replaceAppliedFrankenItemAliases(player, DraftCategory.FLAGSHIP, "firmament_flagship", "obsidian_flagship");
         String emojis = FactionEmojis.Firma_Obs + " " + UnitEmojis.flagship;
         return "Successfully flipped " + emojis + " _Heaven's Eye_ to _Heaven's Hollow_.";
+    }
+
+    @Nullable
+    private static String flipFirmamentMonument(Game game, Player player) {
+        if (!game.isMonumentsMode() || !player.hasUnit("firmament_monument")) return null;
+        player.removeOwnedUnitByID("firmament_monument");
+        player.addOwnedUnitByID("obsidian_monument");
+        replaceAppliedFrankenItemAliases(player, DraftCategory.MONUMENT, "firmament_monument", "obsidian_monument");
+        return "Successfully flipped Firmament Monument to Obsidian Monument.";
     }
 
     @Nullable

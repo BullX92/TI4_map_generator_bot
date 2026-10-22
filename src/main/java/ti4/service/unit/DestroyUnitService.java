@@ -12,10 +12,31 @@ import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.ResourceHelper;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.Iron.IronUnitsHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.zephyrion.ZephyrionBountyButtonHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ashen.AshenUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.dream.DreamUnitsHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.bluereverie.UydaiUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.bluereverie.XinUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.aeterna.AeternaAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.aeterna.AeternaPromissoryHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.aeterna.AeternaTechHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.aeterna.AeternaUnitsHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.scrapyard.ScrapyardAbilitiesHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.scrapyard.ScrapyardBreakthroughHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.vanguard.VanguardLeadersHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.veylor.VeylorUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.tyris.TyrisAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.xan.XanUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.zephyrion.ZephyrionBountyHandler;
+import ti4.discord.interactions.buttons.handlers.planet.MidgardLegendaryButtonHandler;
+import ti4.discord.interactions.buttons.handlers.relics.theodisi.LostLegaciesRelicHandler;
+import ti4.discord.interactions.buttons.handlers.unit.monuments.MonumentsDSButtonHandler;
+import ti4.discord.interactions.buttons.handlers.unit.monuments.TwilightsFallMonumentsButtonHandler;
 import ti4.game.Game;
+import ti4.game.Planet;
 import ti4.game.Player;
 import ti4.game.Tile;
 import ti4.game.UnitHolder;
@@ -32,10 +53,14 @@ import ti4.helpers.StringHelper;
 import ti4.helpers.Units.UnitKey;
 import ti4.helpers.Units.UnitState;
 import ti4.helpers.Units.UnitType;
+import ti4.helpers.bluereverie.BlueReverieTechHelper;
 import ti4.helpers.thundersedge.BreakthroughCommandHelper;
+import ti4.helpers.thundersedge.TeHelperAbilities;
 import ti4.message.MessageHelper;
 import ti4.model.UnitModel;
+import ti4.service.emoji.CardEmojis;
 import ti4.service.emoji.FactionEmojis;
+import ti4.service.emoji.UnitEmojis;
 import ti4.service.unit.RemoveUnitService.RemovedUnit;
 
 @UtilityClass
@@ -159,6 +184,25 @@ public class DestroyUnitService {
                         player, numInfantry, units.getFirst().tile());
             }
         }
+        if (combat) {
+            AeternaTechHandler.offerThanatocyteLattice(event, game, units);
+        }
+        ScrapyardAbilitiesHandler.offerRepurposedParts(event, game, units, combat);
+        ScrapyardBreakthroughHandler.offerCompactorCapture(event, game, units);
+        AeternaAbilityHandler.offerCycleOfReclamationCapture(event, game, units, combat);
+        AeternaUnitsHandler.addCryptControlTokenForDestroyedFighters(game, units);
+        AeternaUnitsHandler.offerGraveyardEffectsForDestroyedUnits(event, game, units);
+        AeternaPromissoryHandler.rollForStasisFighters(event, game, units);
+        XinUnitHandler.captureSentinelDestroyedInfantry(event, game, units);
+        UydaiUnitHandler.resolveDeathCommandos(event, game, units);
+        TwilightsFallMonumentsButtonHandler.captureBlacktfDestroyedInfantry(event, game, units);
+        MonumentsDSButtonHandler.resolveKortaliMonument(event, game, units);
+        MonumentsDSButtonHandler.offerKyroReliquaryRelocation(event, game, units);
+        if (combat) {
+            LostLegaciesRelicHandler.offerNeutralReplacement(event, game, units);
+        }
+        MidgardLegendaryButtonHandler.offerMusterManheim(event, game, units, combat);
+        TeHelperAbilities.offerStrandedStructureRemoval(event, game, units);
 
         // Handle other destroyed units individually
         for (RemovedUnit u : units) handleDestroyedUnit(event, game, units, u, combat);
@@ -173,6 +217,34 @@ public class DestroyUnitService {
             boolean combat) {
         int totalAmount = unit.getTotalRemoved();
         Player player = game.getPlayerFromColorOrFaction(unit.unitKey().colorID());
+
+        if (game.isMonumentsMode()) {
+            if (unit.unitKey().unitType() == UnitType.Monument && game.getActiveSystem() != null) {
+                for (Player secretHolder : game.getRealPlayers()) {
+                    if (secretHolder == player
+                            || !secretHolder.getSecretsUnscored().containsKey("tam")) {
+                        continue;
+                    }
+                    Button scoreButton = Buttons.green(
+                            secretHolder.factionButtonChecker() + "scoreToppleAMonument",
+                            "Score Topple a Monument",
+                            CardEmojis.SecretObjective);
+                    MessageHelper.sendMessageToChannelWithButton(
+                            secretHolder.getCardsInfoThread(),
+                            secretHolder.getRepresentation() + ", a monument was destroyed during a tactical action. "
+                                    + "If you destroyed another player's monument, you can score _Topple a Monument_.",
+                            scoreButton);
+                }
+            }
+        }
+        if (player != null && player.hasAbility("fragmentation")) {
+            CrystellumAbilityHandler.resolveFragmentation(event, game, player, unit);
+        }
+        if (combat && player != null) {
+            if (player.hasUnit("ashen_dreadnought") || player.hasUnit("ashen_dreadnought2")) {
+                AshenUnitHandler.offerAshfallEngineOnDestroy(event, game, player, unit);
+            }
+        }
 
         List<Player> capturing = CaptureUnitService.listCapturingFlagshipPlayers(game, allUnits, unit);
         List<Player> devours = CaptureUnitService.listCapturingCombatPlayers(game, unit);
@@ -195,11 +267,32 @@ public class DestroyUnitService {
         }
 
         List<Player> killers = CaptureUnitService.listProbableKiller(game, unit);
+        VanguardLeadersHandler.offerCommander(event, game, unit, killers, combat);
 
         switch (unit.unitKey().unitType()) {
-            case Infantry -> capturing.addAll(CaptureUnitService.listCapturingMechPlayers(game, allUnits, unit));
+            case Infantry -> {
+                capturing.addAll(CaptureUnitService.listCapturingMechPlayers(game, allUnits, unit));
+                AshenUnitHandler.resolveFlagshipBombardmentInfantryDeath(event, game, player, unit);
+            }
+            case Fighter -> {
+                if (player != null && player.hasUnit("crystellum_fighter3")) {
+                    AddUnitService.addUnits(
+                            event, player.getNomboxTile(), game, player.getColor(), totalAmount + " fighter");
+
+                    String fighterText = totalAmount <= 10
+                            ? UnitEmojis.fighter.toString().repeat(totalAmount)
+                            : UnitEmojis.fighter + "×" + totalAmount;
+
+                    MessageHelper.sendMessageToChannel(
+                            player.getCorrectChannel(),
+                            player.getRepresentation() + " captured " + fighterText + " with SHARD SWARM.");
+                }
+            }
             case Mech -> {
-                handleSelfAssemblyRoutines(player, totalAmount, game);
+                handleSelfAssemblyRoutines(event, player, totalAmount, game, combat, unit);
+                if (player != null && player.hasUnit("ashen_mech")) {
+                    AshenUnitHandler.resolveAshenMechDestroy(game, player, unit);
+                }
                 if (player.hasUnit("iron_mech") || player.hasUnit("iron_mech2")) {
                     IronUnitsHandler.resolveRiptideDestroy(event, game, player, unit);
                 }
@@ -209,7 +302,7 @@ public class DestroyUnitService {
                     IronUnitsHandler.resolveEjectionDestroy(event, game, player, unit, killers);
                 }
                 if (player.hasUnit("dream_mech")) {
-                    DreamButtonHandler.offerRecurringMechButtons(
+                    DreamUnitsHandler.offerRecurringMechButtons(
                             event, game, player, totalAmount, unit.uh().getName(), unit.unitKey());
                 }
                 if (player.hasUnit("mykomentori_mech") || player.hasTech("tf-specops")) {
@@ -228,8 +321,39 @@ public class DestroyUnitService {
                             + " Nauplius (Cheiran mech) being destroyed.\n";
                     MessageHelper.sendMessageToEventChannel(event, message);
                 }
+                if (player.hasUnit("veylor_mech")) {
+                    VeylorUnitHandler.checkVeylorMech(game);
+                }
+                if (player.hasUnit("tyris_mech")) {
+                    TyrisAbilityHandler.offerCCForDestroyedReverb(player);
+                }
+            }
+            case Warsun -> {
+                if (player != null && player.hasUnit("xan_flagship")) {
+                    XanUnitHandler.offerFlagshipReplace(event, game, player);
+                }
+                if (player != null && game.isMuaatManiaMode()) {
+                    String msg = player.getRepresentation()
+                            + " it appears you have been defeated. Instruct your killer (if any) to use the attached buttons to buyout any of your planets that they want (and claim the boon) before pressing the button to finish your elimination";
+                    List<Button> buttons = new ArrayList<>();
+                    buttons.add(Buttons.green("claimMMBoon", "Claim Boon"));
+                    for (String planet : player.getPlanets()) {
+                        buttons.add(Buttons.blue(
+                                "buyoutPlanet_" + planet + "_" + player.getFaction(),
+                                "Buy " + Helper.getPlanetRepresentation(planet, game)));
+                    }
+                    buttons.add(Buttons.red("finishMMElimination_" + player.getFaction(), "Finish Elimination"));
+                    MessageHelper.sendMessageToChannel(player.getCorrectChannel(), msg, buttons);
+                }
             }
             case Flagship -> {
+                UnitModel destroyedFlagship = player == null ? null : player.getUnitFromUnitKey(unit.unitKey());
+                if (destroyedFlagship != null && "crystellum_flagship".equals(destroyedFlagship.getId())) {
+                    CrystellumUnitHandler.offerFractalRebuild(event, game, player, unit.tile());
+                }
+                if (player != null && player.hasUnit("ta_flagship")) {
+                    TaUnitHandler.clearWorldshaperOnFlagshipDestroy(player, unit);
+                }
                 if (player != null && player.hasUnit("yin_flagship")) {
                     String message1 = "Moments before disaster in game " + game.getName() + ".";
                     DisasterWatchHelper.postTileInDisasterWatch(game, event, unit.tile(), 0, message1);
@@ -354,13 +478,19 @@ public class DestroyUnitService {
                     && activePlayer != null
                     && activePlayer.hasAbility("marked_prey")
                     && !activePlayer.equals(player)) {
-                ZephyrionBountyButtonHandler.claimBounty(
+                ZephyrionBountyHandler.claimBounty(
                         game, activePlayer, player, unit.unitKey().unitType(), combat);
             }
         }
     }
 
-    private static void handleSelfAssemblyRoutines(Player player, int min, Game game) {
+    private static void handleSelfAssemblyRoutines(
+            GenericInteractionCreateEvent event,
+            Player player,
+            int min,
+            Game game,
+            boolean combat,
+            RemovedUnit destroyedMech) {
         if (player.hasActiveBreakthrough("naazbt")) {
             BreakthroughCommandHelper.deactivateBreakthrough(player, "naazbt");
         }
@@ -378,6 +508,10 @@ public class DestroyUnitService {
                 ButtonHelperAbilities.pillageCheck(player, game);
             }
             ButtonHelperAgents.resolveArtunoCheck(player, 1);
+        }
+        if (combat && destroyedMech.uh() instanceof Planet) {
+            BlueReverieTechHelper.offerSelfAssemblyRoutinesGroundCombatChoice(
+                    event, game, player, destroyedMech.tile(), destroyedMech.uh(), min);
         }
     }
 }

@@ -48,11 +48,11 @@ class SecretObjectiveButtonHandler {
                 return;
             }
 
-            String msg = player.getRepresentation() + " discarded a secret objective";
+            String msg = player.getRepresentationNoPing() + " discarded a secret objective";
             if (game.getRound() == 1 && !game.isFowMode() && player.getSo() > 1) {
                 int amountLeftToDiscard = -1;
                 for (Player p2 : game.getRealPlayers()) {
-                    if (p2.getSo() > 1) {
+                    if (p2.getSo() > 1 && (!game.isErwansGambitMode() || !"mentak".equalsIgnoreCase(p2.getFaction()))) {
                         amountLeftToDiscard++;
                     }
                 }
@@ -161,8 +161,6 @@ class SecretObjectiveButtonHandler {
             MessageHelper.sendMessageToChannel(event.getMessageChannel(), message.toString());
             return;
         }
-
-        game.ensureBastionAcd2SabotagesIncluded();
 
         DrawSecretService.dealSOToAll(event, 2, game);
         ButtonHelper.deleteMessage(event);

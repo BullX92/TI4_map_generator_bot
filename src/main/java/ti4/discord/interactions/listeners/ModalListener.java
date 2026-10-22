@@ -10,7 +10,9 @@ import ti4.discord.JdaService;
 import ti4.discord.interactions.listeners.context.ModalContext;
 import ti4.discord.interactions.routing.AnnotationHandler;
 import ti4.discord.interactions.routing.HandlerRegistry;
+import ti4.discord.interactions.routing.InteractionProcessingResult;
 import ti4.discord.interactions.routing.ModalHandler;
+import ti4.executors.ExecutionLockManager;
 import ti4.executors.ExecutionLockType;
 import ti4.executors.ExecutorServiceManager;
 import ti4.game.Game;
@@ -19,6 +21,7 @@ import ti4.helpers.settingsFramework.menus.FrankenSettings;
 import ti4.logging.BotLogger;
 import ti4.logging.LogOrigin;
 import ti4.logging.RollbarManager;
+import ti4.message.MessageHelper;
 import ti4.service.game.GameNameService;
 import ti4.spring.context.SpringContext;
 import ti4.spring.service.deploy.ActiveLeaseService;
@@ -59,21 +62,37 @@ public final class ModalListener extends ListenerAdapter {
         event.deferEdit().queue(Consumers.nop(), BotLogger::catchRestError);
 
         String gameName = GameNameService.getGameNameFromChannel(event);
-        String rawModalID = event.getModalId();
-        ExecutionLockType lockType = registry.isSave(rawModalID) ? ExecutionLockType.WRITE : ExecutionLockType.READ;
+        HandlerRegistry.Route<ModalContext> route = registry.resolve(event.getModalId());
+        ExecutionLockType lockType = route.shouldSave() ? ExecutionLockType.WRITE : ExecutionLockType.READ;
         ExecutorServiceManager.runAsyncWithLock(
                 "ModalListener task for  `" + gameName + "`",
                 gameName,
                 event.getMessageChannel(),
-                () -> handleModal(event),
+                () -> handleModal(event, route),
                 lockType);
     }
 
-    private void handleModal(ModalInteractionEvent event) {
+    public InteractionProcessingResult processNow(ModalInteractionEvent event) {
+        String gameName = GameNameService.getGameNameFromChannel(event);
+        var route = registry.resolve(event.getModalId());
+        ExecutionLockType lockType = route.shouldSave() ? ExecutionLockType.WRITE : ExecutionLockType.READ;
+        if (gameName != null) ExecutionLockManager.lock(gameName, lockType);
+        try {
+            return handleModal(event, route);
+        } catch (Exception e) {
+            BotLogger.error(new LogOrigin(event), "Synchronous modal interaction failed", e);
+            return InteractionProcessingResult.FAILED;
+        } finally {
+            if (gameName != null) ExecutionLockManager.unlock(gameName, lockType);
+        }
+    }
+
+    private InteractionProcessingResult handleModal(
+            ModalInteractionEvent event, HandlerRegistry.Route<ModalContext> route) {
         ModalContext context = new ModalContext(event);
         if (!context.isValid()) {
             BotLogger.warning(new LogOrigin(event), "Invalid modal context.");
-            return;
+            return InteractionProcessingResult.REJECTED;
         }
         try {
             RollbarManager.putInteractionMetadata("modal", event);
@@ -83,48 +102,62 @@ public final class ModalListener extends ListenerAdapter {
             CombatReplayService combatReplayService =
                     CombatContestSettings.isEnabledStatic() ? SpringContext.getBean(CombatReplayService.class) : null;
             if (combatReplayService != null) {
-                combatReplayService.setPreInteractionSnapshot(
+                CombatReplayService.setPreInteractionSnapshot(
                         combatReplayService.capturePreInteractionSnapshot(context.getGame()));
             }
             try {
-                resolveModalInteractionEvent(context);
+                InteractionProcessingResult result = resolveModalInteractionEvent(context, route);
                 context.save();
+                return result;
             } finally {
                 if (combatReplayService != null) {
-                    combatReplayService.clearPreInteractionSnapshot();
+                    CombatReplayService.clearPreInteractionSnapshot();
                 }
             }
         } catch (Exception e) {
             String message = "Modal issue in event: " + event.getModalId() + "\n> Channel: "
                     + event.getChannel().getAsMention() + "\n> Command: " + event.getValues();
             BotLogger.error(new LogOrigin(event), message, e);
+            return InteractionProcessingResult.FAILED;
         } finally {
             RollbarManager.clear();
         }
     }
 
-    private void resolveModalInteractionEvent(@Nonnull ModalContext context) {
+    private InteractionProcessingResult resolveModalInteractionEvent(
+            @Nonnull ModalContext context, HandlerRegistry.Route<ModalContext> route) {
         String modalID = context.getModalID();
         Game game = context.getGame();
 
-        if (registry.handle(modalID, context)) return;
+        if (route.dispatch(context))
+            return context.isHandlerFailed()
+                    ? InteractionProcessingResult.FAILED
+                    : InteractionProcessingResult.COMPLETED;
 
         if (modalID.startsWith("jmfA_")) {
             // Detect new settings menu navId() to route to the correct handler.
             String draftSystemNavPart = ".*_draft[._].*";
             if (modalID.matches(draftSystemNavPart)) {
                 game.initializeDraftSystemSettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             if (BaseGameMiniMiltySettings.isBaseGameMiniMiltyMenuComponent(modalID)) {
                 game.initializeBaseGameMiniMiltySettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             if (FrankenSettings.isFrankenMenuComponent(modalID)) {
                 game.initializeFrankenSettings().parseInput(context);
-                return;
+                return InteractionProcessingResult.COMPLETED;
             }
             game.initializeMiltySettings().parseInput(context);
+            return InteractionProcessingResult.COMPLETED;
         }
+
+        context.setShouldSave(false);
+        BotLogger.error(
+                new LogOrigin(context.getEvent(), context),
+                "Unrouted modal: `" + modalID + "`. This could just be a stale modal.");
+        MessageHelper.sendMessageToEventChannel(context.getEvent(), "We couldn't resolve what to do with this modal.");
+        return InteractionProcessingResult.UNROUTED;
     }
 }

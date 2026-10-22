@@ -2,9 +2,12 @@ package ti4.service.leader;
 
 import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.revenant.RevenantLeadersHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.verydith.VerydithLeadersHandler;
 import ti4.game.Game;
 import ti4.game.Leader;
 import ti4.game.Player;
+import ti4.helpers.ButtonHelper;
 import ti4.helpers.Constants;
 import ti4.helpers.Helper;
 import ti4.message.MessageHelper;
@@ -18,6 +21,10 @@ public class UnlockLeaderService {
 
     public static void unlockLeader(String leaderID, Game game, Player player) {
         Leader playerLeader = player.unsafeGetLeader(leaderID);
+        if (playerLeader == null) {
+            MessageHelper.sendMessageToChannel(getOutputChannel(game, player), "Leader " + leaderID + " not found");
+            return;
+        }
         LeaderModel leaderModel = playerLeader.getLeaderModel().orElse(null);
         String message;
         if (leaderModel != null) {
@@ -31,16 +38,17 @@ public class UnlockLeaderService {
 
     public static void unlockLeader(String leaderID, Game game, Player player, String message) {
         Leader playerLeader = player.unsafeGetLeader(leaderID);
-        MessageChannel channel = game.getMainGameChannel();
-        if (game.isFowMode()) {
-            channel = player.getPrivateChannel();
-        }
+        MessageChannel channel = getOutputChannel(game, player);
 
         if (playerLeader == null) {
             MessageHelper.sendMessageToChannel(channel, "Leader " + leaderID + " not found");
             return;
         }
         playerLeader.setLocked(false);
+
+        if (Constants.COMMANDER.equals(playerLeader.getType())) {
+            CommanderUnlockCheckService.checkAllPlayersInGame(game, "revenant");
+        }
 
         LeaderModel leaderModel = playerLeader.getLeaderModel().orElse(null);
         boolean showFlavourText = Constants.VERBOSITY_VERBOSE.equals(game.getOutputVerbosity());
@@ -55,6 +63,14 @@ public class UnlockLeaderService {
             MessageHelper.sendMessageToChannel(
                     channel, LeaderEmojis.getLeaderEmoji(playerLeader).toString());
             MessageHelper.sendMessageToChannel(channel, message);
+        }
+        if (player.hasAbility("commanding_presence")) {
+            MessageHelper.sendMessageToChannelWithButtons(
+                    player.getCorrectChannel(),
+                    player.getRepresentation()
+                            + ", **Commanding Presence** allows you to gain 1 command token after unlocking "
+                            + Helper.getLeaderFullRepresentation(playerLeader) + ".",
+                    ButtonHelper.getGainCCButtons(player));
         }
 
         if (leaderID.contains("bentorcommander")) {
@@ -88,8 +104,30 @@ public class UnlockLeaderService {
             }
         }
 
+        if ("veylorhero".equals(leaderID)) {
+            game.setStoredValue("veylorHeroActive_" + player.getFaction(), "yes");
+            MessageHelper.sendMessageToChannel(
+                    game.getActionsChannel(),
+                    game.getPing() + ", there will now be a third agenda each agenda phase. Congratulations "
+                            + player.getRepresentationNoPing() + ", you are now the senate!");
+        }
+
+        if ("revenanthero".equals(leaderID)) {
+            RevenantLeadersHandler.offerRevenantHeroChoices(game, player);
+        }
+        if ("verydithcommander".equals(leaderID)) {
+            VerydithLeadersHandler.checkVerydithCommander(game);
+        }
+
         if (playerLeader.isExhausted()) {
             MessageHelper.sendMessageToChannel(channel, "Leader is also exhausted");
         }
+    }
+
+    private static MessageChannel getOutputChannel(Game game, Player player) {
+        if (game.isFowMode()) {
+            return player.getPrivateChannel();
+        }
+        return game.getMainGameChannel();
     }
 }

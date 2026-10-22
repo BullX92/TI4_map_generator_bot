@@ -1,7 +1,6 @@
 package ti4.discord;
 
 import jakarta.annotation.Nullable;
-import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -10,6 +9,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
@@ -21,6 +22,7 @@ import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.requests.RestAction;
 import net.dv8tion.jda.api.requests.restaction.CommandListUpdateAction;
 import net.dv8tion.jda.api.utils.ChunkingFilter;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
@@ -40,13 +42,16 @@ import ti4.cron.CloseLaunchThreadsCron;
 import ti4.cron.CronManager;
 import ti4.cron.EndOldGamesCron;
 import ti4.cron.FastScFollowCron;
+import ti4.cron.FlushUserActiveHoursCron;
+import ti4.cron.GameDatabaseReconciliationCron;
 import ti4.cron.GameMessageCleanupCron;
 import ti4.cron.InteractionLogCron;
+import ti4.cron.KeepThreadsAliveCron;
 import ti4.cron.LogButtonRuntimeStatisticsCron;
 import ti4.cron.LogCacheStatsCron;
 import ti4.cron.LongExecutionHistoryCron;
+import ti4.cron.MatchmakerCron;
 import ti4.cron.OldUndoFileCleanupCron;
-import ti4.cron.PersistToSqlCron;
 import ti4.cron.ReuploadStaleEmojisCron;
 import ti4.cron.SabotageAutoReactCron;
 import ti4.cron.TechSummaryCron;
@@ -73,10 +78,13 @@ import ti4.logging.BotLogger;
 import ti4.logging.LogBufferManager;
 import ti4.service.draft.SliceGenerationPipeline;
 import ti4.service.emoji.ApplicationEmojiService;
+import ti4.service.persistence.GameDatabaseSyncPipeline;
 import ti4.service.statistics.StatisticsPipeline;
 import ti4.settings.GlobalSettings;
+import ti4.settings.users.UserActiveHourRecorder;
 import ti4.spring.context.SpringContext;
 import ti4.spring.service.deploy.ActiveLeaseService;
+import ti4.spring.websocket.GameWebStatePipeline;
 
 @UtilityClass
 public class JdaService {
@@ -84,6 +92,7 @@ public class JdaService {
     private static final String JDA_EVENT_POOL_NAME = "JDA Event Pool";
     private static final int EVENT_POOL_SHUTDOWN_TIMEOUT_SECONDS = 5;
     private static final int JDA_SHUTDOWN_TIMEOUT_SECONDS = 20;
+    public static final int DISCORD_REQUEST_TIMEOUT_SECONDS = 60;
     private static final Set<CacheFlag> DISABLED_JDA_CACHE_FLAGS = EnumSet.of(
             // User is playing a game, listening to Spotify, etc.
             CacheFlag.ACTIVITY,
@@ -104,6 +113,7 @@ public class JdaService {
     public static final Set<Role> adminRoles = new HashSet<>();
     public static final Set<Role> developerRoles = new HashSet<>();
     public static final Set<Role> bothelperRoles = new HashSet<>();
+    private static final Pattern NUMERIC_GUILD_ID_PATTERN = Pattern.compile("\\b[0-9]+\\b");
 
     public static JDA jda;
     public static String guildPrimaryID;
@@ -128,8 +138,8 @@ public class JdaService {
     private static Guild guildMegagame;
     private static Guild guildTourney;
     public static final Set<Guild> guilds = new HashSet<>();
-    public static final List<Guild> serversToCreateNewGamesOn = new ArrayList<>();
-    public static final List<Guild> fowServers = new ArrayList<>();
+    public static final Set<Guild> serversToCreateNewGamesOn = new HashSet<>();
+    public static final Set<Guild> fowServers = new HashSet<>();
 
     private static final ExecutorService EVENT_EXECUTOR = Executors.newFixedThreadPool(
             Runtime.getRuntime().availableProcessors(),
@@ -137,6 +147,7 @@ public class JdaService {
 
     public static void startJdaAndRegisterListeners(String[] args) {
         BotLogger.info("STARTING JDA");
+        RestAction.setDefaultTimeout(DISCORD_REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         jda = JDABuilder.createDefault(args[0])
                 .setEventPool(EVENT_EXECUTOR)
                 .enableIntents(
@@ -279,7 +290,10 @@ public class JdaService {
         BotLogger.info("FINISHED INITIALIZING SERVERS\n> "
                 + guilds.size() + " total servers connected\n> "
                 + serversToCreateNewGamesOn.size() + " Overflow servers for new games\n> "
-                + fowServers.size() + " Fog of War servers");
+                + fowServers.size() + " Fog of War servers"
+                + "\n> Guilds: " + jda.getGuilds().stream().map(Guild::getName).collect(Collectors.toSet()));
+
+        if (isProduction()) leaveNonWhitelistedGuilds();
 
         // Attempt to start a "Search Only" version of the bot on eligible servers
         for (Guild searchGuild : jda.getGuilds()) {
@@ -321,7 +335,7 @@ public class JdaService {
         ReuploadStaleEmojisCron.register();
         LogCacheStatsCron.register();
         WinningPathCron.register();
-        PersistToSqlCron.register();
+        GameDatabaseReconciliationCron.register();
         UploadStatsCron.register();
         UploadRecentStatsCron.register();
         OldUndoFileCleanupCron.register();
@@ -329,10 +343,13 @@ public class JdaService {
         GameMessageCleanupCron.register();
         CardsInfoPinCleanupCron.register();
         LogButtonRuntimeStatisticsCron.register();
+        FlushUserActiveHoursCron.register();
         TechSummaryCron.register();
         SabotageAutoReactCron.register();
         FastScFollowCron.register();
+        MatchmakerCron.register();
         CloseLaunchThreadsCron.register();
+        KeepThreadsAliveCron.register();
         if (CombatContestSettings.isEnabledStatic()) {
             CombatReplaySelectionCron.register();
             CombatReplayPromotionCron.register();
@@ -360,7 +377,7 @@ public class JdaService {
     }
 
     private static Guild initGuild(String guildID, boolean addToNewGameServerList) {
-        if (!guildID.matches("\\b[0-9]+\\b")) {
+        if (!NUMERIC_GUILD_ID_PATTERN.matcher(guildID).matches()) {
             BotLogger.error(
                     "Invalid Guild ID provided: `" + guildID
                             + "` - If this is running in Production, please correct the ID [here](https://github.com/AsyncTI4/TI4_map_generator_bot/settings/variables/actions/GUILDID_LIST)");
@@ -485,6 +502,8 @@ public class JdaService {
         adminRoles.add(jda.getRoleById("1465619434839347276")); // Ariel's server
         adminRoles.add(jda.getRoleById("1487725249398308884")); // Balacasi's server
         adminRoles.add(jda.getRoleById("1500012691224395906")); // BEANS's server
+        adminRoles.add(jda.getRoleById("1516450864376578238")); // Stabar's Server
+        adminRoles.add(jda.getRoleById("1527947707518423150")); // niugnip's Server
 
         adminRoles.removeIf(Objects::isNull);
 
@@ -523,6 +542,8 @@ public class JdaService {
         developerRoles.add(jda.getRoleById("1465619572718567526")); // Ariel's server
         developerRoles.add(jda.getRoleById("1487725369766449173")); // Balacasi's server
         developerRoles.add(jda.getRoleById("1500012939326001263")); // BEANS's server
+        developerRoles.add(jda.getRoleById("1516450864376578238")); // Stabar's Server
+        developerRoles.add(jda.getRoleById("1527947972615209041")); // niugnip's Server
 
         developerRoles.removeIf(Objects::isNull);
 
@@ -565,8 +586,16 @@ public class JdaService {
         bothelperRoles.add(jda.getRoleById("1465619810577678442")); // Ariel's server
         bothelperRoles.add(jda.getRoleById("1487725393673719950")); // Balacasi's server
         bothelperRoles.add(jda.getRoleById("1500013009492246558")); // BEANS's server
+        bothelperRoles.add(jda.getRoleById("1516450864376578238")); // Stabar's Server
+        bothelperRoles.add(jda.getRoleById("1527947912108183686")); // niugnip's Server
 
         bothelperRoles.removeIf(Objects::isNull);
+
+        ConfiguredDiscordRoles.addTo(jda, adminRoles, System.getenv("DISCORD_ADMIN_ROLE_IDS"));
+        ConfiguredDiscordRoles.addTo(jda, developerRoles, System.getenv("DISCORD_DEVELOPER_ROLE_IDS"));
+        ConfiguredDiscordRoles.addTo(jda, bothelperRoles, System.getenv("DISCORD_BOTHELPER_ROLE_IDS"));
+        developerRoles.addAll(adminRoles);
+        bothelperRoles.addAll(developerRoles);
     }
 
     public static String getBotId() {
@@ -597,6 +626,26 @@ public class JdaService {
         return null;
     }
 
+    private static void leaveNonWhitelistedGuilds() {
+        jda.getGuilds().forEach(JdaService::leaveGuildIfNotWhitelisted);
+    }
+
+    public static void leaveGuildIfNotWhitelisted(Guild guild) {
+        // if (!isProduction() || isWhitelistedGuild(guild)) return;
+        // BotLogger.warning(
+        //         "Leaving guild '" + guild.getName() + "' (" + guild.getId() + ") because it isn't whitelisted!");
+        // guild.leave().queue(Consumers.nop(), BotLogger::catchRestError);
+    }
+
+    public static boolean isProduction() {
+        return Constants.ASYNCTI4_HUB_SERVER_ID.equals(guildPrimaryID);
+    }
+
+    private static boolean isWhitelistedGuild(Guild guild) {
+        return guilds.stream().anyMatch(whitelistGuild -> whitelistGuild.getId().equals(guild.getId()))
+                || Constants.EMOJI_FARM_SERVERS.containsKey(guild.getId());
+    }
+
     public static void shutdown() {
         try {
             AsyncTI4DiscordBot.markShuttingDown();
@@ -610,9 +659,12 @@ public class JdaService {
             logShutdownResult(JDA_EVENT_POOL_NAME, shutdownEventExecutor());
             logShutdownResult(ExecutorServiceManager.class.getSimpleName(), ExecutorServiceManager.shutdown());
             logShutdownResult(CronManager.class.getSimpleName(), CronManager.shutdown());
+            UserActiveHourRecorder.flush();
             logShutdownResult(SliceGenerationPipeline.class.getSimpleName(), SliceGenerationPipeline.shutdown());
             logShutdownResult(MapRenderPipeline.class.getSimpleName(), MapRenderPipeline.shutdown());
             logShutdownResult(StatisticsPipeline.class.getSimpleName(), StatisticsPipeline.shutdown());
+            logShutdownResult(GameWebStatePipeline.class.getSimpleName(), GameWebStatePipeline.shutdown());
+            logShutdownResult(GameDatabaseSyncPipeline.class.getSimpleName(), GameDatabaseSyncPipeline.shutdown());
 
             SpringContext.getBean(ActiveLeaseService.class).releaseLease();
             BotLogger.info("RELEASED ACTIVE LEASE");

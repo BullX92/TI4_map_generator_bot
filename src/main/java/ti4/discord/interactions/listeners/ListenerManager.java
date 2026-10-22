@@ -9,8 +9,10 @@ public class ListenerManager {
     public static void registerListeners(JDA jda) {
         jda.addEventListener(
                 // Priority Listeners First
+                new GuildWhitelistListener(),
                 new BotRuntimeStatsListener(),
                 new MessageListener(),
+                WrapperMessageListener.getBean(),
                 new LazaxMinigameReactionListener(),
                 new SlashCommandListener(),
                 new ContextInteractionListener(),

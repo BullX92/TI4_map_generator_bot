@@ -59,6 +59,7 @@ import ti4.model.BorderAnomalyHolder;
 import ti4.model.TemporaryCombatModifierModel;
 import ti4.service.map.CustomHyperlaneService;
 import ti4.service.option.FOWOptionService.FOWOption;
+import ti4.service.tactical.TacticalActionDisplacementService;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.module.SimpleModule;
@@ -73,7 +74,7 @@ class GameLoadService {
                     .addKeySerializer(Units.UnitKey.class, new UnitKeyMapKeySerializer())
                     .addKeyDeserializer(Units.UnitKey.class, new UnitKeyMapKeyDeserializer()))
             .build();
-    private static final Pattern PATTERN = Pattern.compile("—");
+    private static final Pattern EM_DASH_PATTERN = Pattern.compile("—");
     private static final String GAME_FILE_EXTENSION = Constants.TXT;
 
     static List<String> loadGameNames() {
@@ -249,6 +250,9 @@ class GameLoadService {
                 if (ENDTOKENS.equals(data)) {
                     break;
                 }
+                if (tile != null && data.startsWith(FOW_VISION_GRANT + " ")) {
+                    tile.setFowVisionGrant(Helper.getListFromCSV(data.substring(FOW_VISION_GRANT.length() + 1)));
+                }
             }
         }
         return tileMap;
@@ -339,6 +343,7 @@ class GameLoadService {
                 case Constants.MANDATES -> game.setMandates(getCardList(info));
                 case Constants.AC_DISCARDED -> game.setDiscardActionCards(getParsedCards(info));
                 case Constants.AC_STATUS -> game.setDiscardActionCardStatus(getParsedCardStatus(info));
+                case Constants.AC_PLAYED -> game.setPlayedActionCards(new LinkedHashSet<>(getCardList(info)));
                 case Constants.AC_PURGED ->
                     game.setPurgedActionCards(
                             getParsedCards(info).keySet().stream().toList()); // @Deprecated
@@ -506,6 +511,7 @@ class GameLoadService {
                 case Constants.DISPLACED_UNITS_ACTIVATION_NEW -> {
                     Map<String, Map<UnitKey, List<Integer>>> displacedUnits =
                             mapper.readValue(info, new TypeReference<>() {});
+                    TacticalActionDisplacementService.removeEmptyDisplacement(displacedUnits);
                     game.setTacticalActionDisplacement(displacedUnits);
                 }
                 case Constants.FOW_OPTIONS -> {
@@ -548,6 +554,7 @@ class GameLoadService {
                 case Constants.FAST_SC_FOLLOW -> game.setFastSCFollowMode(parseBooleanOrDefault(info, false));
                 case Constants.QUEUE_SO -> game.setQueueSO(parseBooleanOrDefault(info, false));
                 case Constants.SHOW_BUBBLES -> game.setShowBubbles(parseBooleanOrDefault(info, false));
+                // TODO: default false here vs true in GameProperties; a missing token reverts to legacy flow.
                 case Constants.TRANSACTION_METHOD -> game.setNewTransactionMethod(parseBooleanOrDefault(info, false));
                 case Constants.SHOW_GEARS -> game.setShowGears(parseBooleanOrDefault(info, false));
                 case Constants.SHOW_BANNERS -> game.setShowBanners(parseBooleanOrDefault(info, false));
@@ -570,7 +577,12 @@ class GameLoadService {
                 case Constants.BASE_GAME_MODE -> game.setBaseGameMode(parseBooleanOrDefault(info, false));
                 case Constants.THUNDERS_EDGE_MODE -> game.setThundersEdge(parseBooleanOrDefault(info, false));
                 case Constants.TWILIGHTS_FALL_MODE -> game.setTwilightsFallMode(parseBooleanOrDefault(info, false));
+                // setTwilightKart is Deprecated. Once removed, remove this case
                 case Constants.TWILIGHT_KART -> game.setTwilightKart(parseBooleanOrDefault(info, false));
+                case Constants.TK_DESTROYER_CUP -> game.setTkDestroyerCup(parseBooleanOrDefault(info, false));
+                case Constants.TK_NOVA_CUP -> game.setTkNovaCup(parseBooleanOrDefault(info, false));
+                case Constants.TF_BR -> game.setTfBr(parseBooleanOrDefault(info, false));
+                case Constants.TWILIGHT_DS -> game.setTwilightDS(parseBooleanOrDefault(info, false));
                 case Constants.LIGHT_FOG_MODE -> game.setLightFogMode(parseBooleanOrDefault(info, false));
                 case Constants.CPTI_EXPLORE_MODE -> game.setCptiExploreMode(parseBooleanOrDefault(info, false));
                 case Constants.RED_TAPE_MODE -> game.setRedTapeMode(parseBooleanOrDefault(info, false));
@@ -621,20 +633,26 @@ class GameLoadService {
                 case Constants.WILD_WILD_GALAXY_MODE -> game.setWildWildGalaxyMode(parseBooleanOrDefault(info, false));
                 case Constants.FEAST_OR_FAMINE_MODE -> game.setFeastOrFamineMode(parseBooleanOrDefault(info, false));
                 case Constants.WEIRD_WORMHOLES_MODE -> game.setWeirdWormholesMode(parseBooleanOrDefault(info, false));
+                case Constants.COSMIC_CONVERGENCE_MODE ->
+                    game.setCosmicConvergenceMode(parseBooleanOrDefault(info, false));
+                case Constants.MUAAT_MANIA_MODE -> game.setMuaatManiaMode(parseBooleanOrDefault(info, false));
                 case Constants.NO_FRACTURE -> game.setNoFractureMode(parseBooleanOrDefault(info, false));
                 case Constants.CALL_OF_THE_VOID_MODE -> game.setCallOfTheVoidMode(parseBooleanOrDefault(info, false));
                 case Constants.COSMIC_PHENOMENAE_MODE ->
                     game.setCosmicPhenomenaeMode(parseBooleanOrDefault(info, false));
                 case Constants.MONUMENTS_TO_THE_AGES_MODE ->
                     game.setMonumentToTheAgesMode(parseBooleanOrDefault(info, false));
+                case Constants.MONUMENTS_MODE -> game.setMonumentsMode(parseBooleanOrDefault(info, false));
                 case Constants.CIVILIZED_SOCIETY_MODE ->
                     game.setCivilizedSocietyMode(parseBooleanOrDefault(info, false));
                 case Constants.NO_SWAP_MODE -> game.setNoSwapMode(parseBooleanOrDefault(info, false));
                 case Constants.VEILED_HEART_MODE -> game.setVeiledHeartMode(parseBooleanOrDefault(info, false));
+                case Constants.LORE_MODE -> game.setLoreMode(parseBooleanOrDefault(info, false));
                 case Constants.LIMITED_WHISPERS_MODE -> game.setLimitedWhispersMode(parseBooleanOrDefault(info, false));
                 case Constants.WHISPERS_DISABLED -> game.setWhispersDisabled(parseBooleanOrDefault(info, false));
                 case Constants.ORDINIAN_C1_MODE -> game.setOrdinianC1Mode(parseBooleanOrDefault(info, false));
                 case Constants.LIBERATION_C4_MODE -> game.setLiberationC4Mode(parseBooleanOrDefault(info, false));
+                case Constants.ERWANS_GAMBIT_MODE -> game.setErwansGambitMode(parseBooleanOrDefault(info, false));
                 case Constants.VOTC_MODE -> game.setVotcMode(parseBooleanOrDefault(info, false));
                 case Constants.SHOW_FULL_COMPONENT_TEXT ->
                     game.setShowFullComponentTextEmbeds(parseBooleanOrDefault(info, false));
@@ -649,6 +667,21 @@ class GameLoadService {
                 case Constants.BUTTON_PRESS_COUNT -> {
                     if (isNotBlank(info)) {
                         game.setButtonPressCount(Integer.parseInt(info));
+                    }
+                }
+                case Constants.EVENT_SEQUENCE_COUNTER -> {
+                    if (isNotBlank(info)) {
+                        game.setEventSequenceCounter(Long.parseLong(info));
+                    }
+                }
+                case Constants.PENDING_SUB_EVENTS_JSON -> {
+                    if (isNotBlank(info)) {
+                        game.setPendingSubEventsJson(info);
+                    }
+                }
+                case Constants.PENDING_MOVEMENT_STATE -> {
+                    if (isNotBlank(info)) {
+                        game.setPendingMovementState(info);
                     }
                 }
                 case Constants.STARTED_DATE -> {
@@ -742,7 +775,7 @@ class GameLoadService {
         while (mapdata.hasMoreTokens()) {
             StringTokenizer entry = new StringTokenizer(mapdata.nextToken(), ",");
             String id = entry.nextToken();
-            String val = entry.nextToken();
+            String val = entry.hasMoreTokens() ? entry.nextToken() : "";
             data.put(id, val);
         }
         return data;
@@ -908,6 +941,7 @@ class GameLoadService {
                     player.setCommoditiesBase(Math.max(0, Integer.parseInt(tokenizer.nextToken())));
                 case Constants.COMMODITIES -> player.loadCommodities(Integer.parseInt(tokenizer.nextToken()));
                 case Constants.STASIS_INFANTRY -> player.setStasisInfantry(Integer.parseInt(tokenizer.nextToken()));
+                case Constants.STASIS_FIGHTERS -> player.setStasisFighters(Integer.parseInt(tokenizer.nextToken()));
                 case Constants.AUTO_SABO_PASS_MEDIAN ->
                     player.setAutoSaboPassMedian(Integer.parseInt(tokenizer.nextToken()));
                 case Constants.CAPTURE -> {
@@ -1014,6 +1048,8 @@ class GameLoadService {
                 case Constants.DRAFT_QUEUE -> player.loadItemsToDraft(getCardList(tokenizer.nextToken()));
                 case Constants.DRAFT_HAND -> player.loadDraftHand(getCardList(tokenizer.nextToken()));
                 case Constants.ABILITIES -> player.setAbilities(new HashSet<>(getCardList(tokenizer.nextToken())));
+                case Constants.EXHAUSTED_ABILITIES ->
+                    player.setExhaustedAbilities(new HashSet<>(getCardList(tokenizer.nextToken())));
                 case Constants.TECH_EXHAUSTED -> player.setExhaustedTechs(getCardList(tokenizer.nextToken()));
                 case Constants.TECH_PURGED -> player.setPurgedTechs(getCardList(tokenizer.nextToken()));
                 case Constants.RELICS -> player.setRelics(getCardList(tokenizer.nextToken()));
@@ -1048,7 +1084,7 @@ class GameLoadService {
                         String tileID = system[1];
                         String label = system[2];
                         if (label != null)
-                            label = PATTERN.matcher(label).replaceAll(" "); // replace em dash with spaces
+                            label = EM_DASH_PATTERN.matcher(label).replaceAll(" "); // replace em dash with spaces
                         player.addFogTile(tileID, position, label);
                     }
                 }
@@ -1102,9 +1138,12 @@ class GameLoadService {
                     String filter = tokenizer.nextToken();
                     player.setFogFilter(filter);
                 }
+                case Constants.FOG_GHOST_HEXES -> player.setFogGhostHexes(Boolean.parseBoolean(tokenizer.nextToken()));
                 case Constants.PASSED -> player.setPassed(Boolean.parseBoolean(tokenizer.nextToken()));
                 case Constants.READY_TO_PASS_BAG ->
                     player.setReadyToPassBag(Boolean.parseBoolean(tokenizer.nextToken()));
+                case Constants.OPLUSPLUS_COUNCIL_CONFIRMED ->
+                    player.setOplusplusCouncilConfirmed(Boolean.parseBoolean(tokenizer.nextToken()));
                 case Constants.AUTO_PASS_WHENS_N_AFTERS ->
                     player.setAutoPassOnWhensAfters(Boolean.parseBoolean(tokenizer.nextToken()));
                 case Constants.SEARCH_WARRANT -> player.setSearchWarrant(Boolean.parseBoolean(tokenizer.nextToken()));

@@ -1,0 +1,39 @@
+[
+    {
+        "alias": "arachnerabt",
+        "name": "Feed the Swarm",
+        "shortName": "Feed the\nSwarm",
+        "faction": "arachnera",
+        "synergy": [
+            "BIOTIC",
+            "CYBERNETIC"
+        ],
+        "text": "If you have the Cruiser II unit upgrade technology, flip this card and place it on top of Cruiser II.",
+        "source": "luminous"
+    },
+    {
+        "alias": "psmbt",
+        "name": "PSM Breakthrough",
+        "shortName": "PSM\nBreakthrough",
+        "faction": "psm",
+        "synergy": [
+            "PROPULSION",
+            "WARFARE"
+        ],
+        "text": "Each system or planet can contain a number of structures equal to +1 the number of structures that game effects or abilities would allow.\n\n Each planet in a system that contains 1 or more of your structures, increases its Resources and Influence by 1.\n\n You may exhaust this card at the start of your turn during the action phase; remove up to 2 of your structures from the game board and place them in a system you control.",
+        "source": "luminous"
+    },
+    {
+        "alias": "opabt",
+        "name": "Ring Gates",
+        "shortName": "Ring\nGates",
+        "faction": "opa",
+        "synergy": [
+            "PROPULSION",
+            "CYBERNETIC"
+        ],
+        "text": "When you gain this card, place an additional Station Planet Token in your Homesystem. Then Gain that Station Planet Token Card and ready it. Then all Station Planet Planets are now treated as space stations with no other planet type for the rest of the game.\n\n After you activate a system: You may treat all systems that contain a Space Station as being adjacent to each other during a tactical action.",
+        "notes": "When you gain this Breakthrough: All units and structures on each Broken planet are moved to space if possible, or returned to the unit owner’s unit pool.",
+        "source": "luminous"
+    }
+]

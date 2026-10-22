@@ -28,6 +28,10 @@ public class DeveloperCommand implements ParentCommand {
                     new AnnounceActiveGames(),
                     new DatabasePersistence(),
                     new DeleteUserMessages(),
+                    new PostMatchmakingButtons(),
+                    new ModifyMatchmakingQueue(),
+                    new ShowMatchmakingRatingHistory(),
+                    new ShowGameMatchmakingRatings(),
                     new RunSql())
             .collect(Collectors.toMap(Subcommand::getName, subcommand -> subcommand));
 

@@ -23,6 +23,7 @@ import ti4.message.MessageHelper;
 import ti4.service.StatusCleanupService;
 import ti4.service.button.ReactionService;
 import ti4.service.emoji.MiscEmojis;
+import ti4.service.fow.FowScoringStatusService;
 import ti4.service.game.EndGameService;
 import ti4.service.game.StartPhaseService;
 import ti4.service.info.ListPlayerInfoService;
@@ -35,7 +36,7 @@ class StatusPhaseButtonHandler {
     public static void revealPOStage(ButtonInteractionEvent event, String buttonID, Game game) {
         String stage = buttonID.replace("reveal_stage_", "");
         if ("true".equalsIgnoreCase(game.getStoredValue("forcedScoringOrder"))) {
-            if ("statusScoring".equalsIgnoreCase(game.getPhaseOfGame())) {
+            if (StatusHelper.isStatusScoring(game)) {
                 StringBuilder missingPeople = new StringBuilder();
                 for (Player player : game.getRealPlayers()) {
                     String so = game.getStoredValue(player.getFaction() + "round" + game.getRound() + "SO");
@@ -103,6 +104,7 @@ class StatusPhaseButtonHandler {
         if (!game.isOmegaPhaseMode()) {
             StartPhaseService.startStatusHomework(event, game);
         } else {
+            StatusHelper.commitStatusScoringEvent(game);
             if (Constants.IMPERIUM_REX_ID.equalsIgnoreCase(revealedObjective)) {
                 EndGameService.secondHalfOfGameEnd(event, game, true, true, false);
             } else {
@@ -145,6 +147,7 @@ class StatusPhaseButtonHandler {
         String message =
                 player.getRepresentation() + " has opted not to score a secret objective at this point in time.";
         game.setStoredValue(player.getFaction() + "round" + game.getRound() + "SO", "None");
+        FowScoringStatusService.refresh(game, player);
         MessageHelper.sendMessageToChannel(player.getCorrectChannel(), message);
         String key2 = "queueToScoreSOs";
         String key3 = "potentialScoreSOBlockers";
@@ -175,6 +178,7 @@ class StatusPhaseButtonHandler {
             MessageHelper.sendMessageToChannel(event.getChannel(), message);
         }
         game.setStoredValue(player.getFaction() + "round" + game.getRound() + "PO", "None");
+        FowScoringStatusService.refresh(game, player);
         String reply = game.isFowMode() ? "No public objective scored" : null;
         ReactionService.addReaction(event, game, player, reply);
         String key2 = "queueToScorePOs";

@@ -10,9 +10,9 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.kalora.KaloraAbilityHandler;
 import ti4.game.Game;
 import ti4.game.Player;
-import ti4.helpers.ActionCardHelper;
 import ti4.helpers.BreakthroughHelper;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.ButtonHelperAbilities;
@@ -20,9 +20,11 @@ import ti4.helpers.ButtonHelperAgents;
 import ti4.helpers.ButtonHelperCommanders;
 import ti4.helpers.FoWHelper;
 import ti4.helpers.Helper;
+import ti4.helpers.StatusHelper;
 import ti4.image.Mapper;
 import ti4.message.MessageHelper;
 import ti4.service.emoji.CardEmojis;
+import ti4.service.fow.FowScoringStatusService;
 import ti4.service.game.EndedGameScoringGuardService;
 import ti4.service.info.ListPlayerInfoService;
 import ti4.service.leader.HeroUnlockCheckService;
@@ -61,13 +63,21 @@ public class ScorePublicObjectiveService {
         boolean scored = game.scorePublicObjective(player.getUserID(), poID);
         if (!"action".equalsIgnoreCase(game.getPhaseOfGame())) {
             game.setStoredValue(player.getFaction() + "round" + game.getRound() + "PO", poName);
+            FowScoringStatusService.refresh(game, player);
         }
         if (!scored) {
             MessageHelper.sendMessageToChannel(
                     channel,
                     player.getFactionEmoji() + ", no such public objective ID found, or already scored, please retry.");
         } else {
+            StatusHelper.recordObjectiveScored(game, player, id, "PUBLIC");
             informAboutScoring(event, channel, game, player, poID);
+            if (player.hasAbility("primordial")) {
+                KaloraAbilityHandler.primordial(player, game);
+            }
+            if (player.getPromissoryNotesInPlayArea().contains("bapnkalo")) {
+                KaloraAbilityHandler.sharedTreasure(player, game);
+            }
             for (Player p2 : player.getNeighbouringPlayers(true)) {
                 if (p2.hasLeaderUnlocked("syndicatecommander")) {
                     p2.setTg(p2.getTg() + 1);
@@ -137,6 +147,9 @@ public class ScorePublicObjectiveService {
                     + player.getCCRepresentation() + ". Use buttons to gain 1 command token.";
             MessageHelper.sendMessageToChannelWithButtons(player.getCorrectChannel(), message2, buttons);
         }
+        if (game.isMuaatManiaMode()) {
+            ButtonHelper.offerMMBoon(player, game);
+        }
         if (player.hasTech("tf-yinascendant") && !poName.toLowerCase().contains("custodian")) {
             MessageHelper.sendMessageToChannel(
                     player.getCorrectChannel(), player.getRepresentation() + " gains 1 card due to _Yin Ascendant_.");
@@ -177,18 +190,6 @@ public class ScorePublicObjectiveService {
                 DrawSecretService.drawSO(event, game, p2);
             }
         }
-        if (player.hasAbility("reflect")) {
-
-            List<String> scoredPlayerList =
-                    game.getScoredPublicObjectives().computeIfAbsent(idC, key -> new ArrayList<>());
-            if (scoredPlayerList.size() > 1 && Mapper.getPublicObjective(idC) != null) {
-                MessageHelper.sendMessageToChannel(
-                        player.getCorrectChannel(),
-                        player.getRepresentation()
-                                + " is drawing 1 action card due to scoring an objective someone else already scored while having the _Reflect_ Honor card.");
-                ActionCardHelper.drawActionCardsSilent(player, 1);
-            }
-        }
         if (game.isOmegaPhaseMode()) {
             // Omega Phase objectives require you to have, not spend. Skip all the spending checks.
             return;
@@ -209,6 +210,24 @@ public class ScorePublicObjectiveService {
                                 + " __either__ the resource or influence requirement of this objective, but __not__ both.";
             }
             List<Button> buttons = ButtonHelper.getExhaustButtonsWithTG(game, player, "both");
+            List<Integer> unfollowedSCs = player.getUnfollowedSCs();
+            if (unfollowedSCs != null
+                    && !unfollowedSCs.contains(1)
+                    && !game.getPhaseOfGame().contains("action")
+                    && !unfollowedSCs.contains(6)
+                    && !unfollowedSCs.contains(7)) {
+                message2 = player.getRepresentationUnfogged()
+                        + ", please choose the planets you wish to exhaust to score the objective.";
+                game.setStoredValue("resetSpend", "sup");
+                for (String planet : player.getPlanets()) {
+                    if (!player.getExhaustedPlanets().contains(planet)) {
+                        player.exhaustPlanet(planet);
+                        player.addSpentThing(planet);
+                    }
+                }
+                message2 += "\n" + Helper.buildSpentThingsMessage(player, game, "both");
+                buttons = ButtonHelper.getExhaustButtonsWithTG(game, player, "both");
+            }
             Button DoneExhausting = Buttons.red("deleteButtons", "Done Exhausting Planets");
             buttons.add(DoneExhausting);
             MessageHelper.sendMessageToChannelWithButtons(player.getCorrectChannel(), message2, buttons);

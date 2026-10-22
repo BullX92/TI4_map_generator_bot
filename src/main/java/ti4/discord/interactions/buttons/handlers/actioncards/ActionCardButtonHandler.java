@@ -2,12 +2,12 @@ package ti4.discord.interactions.buttons.handlers.actioncards;
 
 import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.RelitigateLLButtonHandler;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.game.Game;
-import ti4.game.GameStats;
 import ti4.game.Player;
 import ti4.helpers.ActionCardHelper;
-import ti4.helpers.AgendaHelper;
+import ti4.helpers.AgendaRiderHelper;
 import ti4.helpers.AliasHandler;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.ButtonHelperCommanders;
@@ -15,6 +15,7 @@ import ti4.helpers.ButtonHelperModifyUnits;
 import ti4.helpers.Helper;
 import ti4.message.GameMessageManager;
 import ti4.message.MessageHelper;
+import ti4.service.actioncard.SabotageService;
 import ti4.service.button.ReactionService;
 
 @UtilityClass
@@ -44,14 +45,32 @@ class ActionCardButtonHandler {
         String type = typeNNameNTarget.split("_")[0];
         String acName = typeNNameNTarget.split("_")[1];
         String target = "somebody";
+        Player targetPlayer = null;
         if (typeNNameNTarget.split("_").length > 2) {
             String faction = typeNNameNTarget.split("_")[2];
             Player p2 = game.getPlayerFromColorOrFaction(faction);
-            target = p2.getRepresentationUnfogged();
+            if (p2 != null) {
+                targetPlayer = p2;
+                target = p2.getRepresentationUnfogged();
+            }
         }
+
+        if (player.equals(targetPlayer)) {
+            MessageHelper.sendMessageToChannel(
+                    player.getCardsInfoThread(),
+                    player.getRepresentation() + ", you cannot cancel your own action card _" + acName + "_.");
+            return;
+        }
+        if (SabotageService.isShameixBaneCancellationBlocked(player, targetPlayer)) {
+            MessageHelper.sendMessageToChannel(
+                    player.getCardsInfoThread(),
+                    player.getRepresentation() + ", you cannot cancel " + targetPlayer.getRepresentationNoPing()
+                            + "'s action card due to _Shameix's Bane_.");
+            return;
+        }
+
         String message = game.getPing() + ", the action card _" + acName + "_ played by " + target
                 + " has been canceled by " + player.getRepresentationUnfogged() + " with ";
-        game.getGameStats().recordAcPlayWithTarget(GameStats.SABOTAGE, player, acName);
         GameMessageManager.remove(game.getName(), event.getMessageId());
         boolean sendReact = true;
         if ("empy".equalsIgnoreCase(type)) {
@@ -126,9 +145,14 @@ class ActionCardButtonHandler {
         }
 
         if (acName.contains("Rider") || acName.contains("Sanction")) {
-            AgendaHelper.reverseRider("reverse_" + acName, game, player);
+            AgendaRiderHelper.reverseRider("reverse_" + acName, game, player);
         }
         if (sendReact) {
+            game.getGameStats().markLatestPlayCanceled(acName);
+            if ("Relitigate".equals(acName) && targetPlayer != null) {
+                RelitigateLLButtonHandler.onRelitigateSabotaged(game, targetPlayer);
+            }
+            EscapeClauseActionCardHandler.resolveSabotagedEscapeClause(event, game, targetPlayer, acName);
             if (game.isFowMode()) {
                 MessageHelper.sendMessageToChannel(
                         game.getActionsChannel(),

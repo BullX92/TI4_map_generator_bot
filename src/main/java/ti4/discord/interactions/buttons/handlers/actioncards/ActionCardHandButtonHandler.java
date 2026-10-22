@@ -9,7 +9,8 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.arvaxi.ArvaxiAgentButtonHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.bluereverie.XinTechHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.wftv.arvaxi.ArvaxiLeaderHandler;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.game.Game;
 import ti4.game.Player;
@@ -34,6 +35,15 @@ class ActionCardHandButtonHandler {
     static void getACFrom(ButtonInteractionEvent event, Player player, String buttonID, Game game) {
         String faction = buttonID.replace("getACFrom_", "");
         Player victim = game.getPlayerFromColorOrFaction(faction);
+        if (victim == null || XinTechHandler.hasAstromanticCloakSteel(victim)) {
+            MessageHelper.sendMessageToChannel(
+                    player.getCorrectChannel(),
+                    player.getRepresentation() + ", you cannot forcibly take "
+                            + (victim == null ? "that player's" : victim.getRepresentationNoPing() + "'s")
+                            + " Action Cards.");
+            ButtonHelper.deleteMessage(event);
+            return;
+        }
         List<Button> buttons = ButtonHelperFactionSpecific.getButtonsToTakeSomeonesAC(player, victim);
         ActionCardHelper.showAll(victim, player, game);
         MessageHelper.sendMessageToChannelWithButtons(
@@ -61,6 +71,14 @@ class ActionCardHandButtonHandler {
         int acIndex = Integer.parseInt(stripped.split("_")[0]);
         String receiverFaction = stripped.split("_")[1];
         Player receiver = game.getPlayerFromColorOrFaction(receiverFaction);
+        if (XinTechHandler.hasAstromanticCloakSteel(player)) {
+            MessageHelper.sendMessageToChannel(
+                    receiver == null ? event.getMessageChannel() : receiver.getCorrectChannel(),
+                    "You cannot forcibly take " + player.getRepresentationNoPing()
+                            + "'s Action Cards because they have _Astromantic Cloak (Steel)_!");
+            ButtonHelper.deleteMessage(event);
+            return;
+        }
         if (receiver == null || !player.getActionCards().containsValue(acIndex)) {
             MessageHelper.sendMessageToChannel(
                     event.getMessageChannel(), "Could not resolve, please resolve manually.");
@@ -90,6 +108,7 @@ class ActionCardHandButtonHandler {
         boolean stalling = false;
         boolean drawReplacement = false;
         boolean retainButtons = false;
+        boolean arvaxiCommander = false;
         if (acIndex.contains("stall")) {
             acIndex = acIndex.replace("stall", "");
             stalling = true;
@@ -102,7 +121,6 @@ class ActionCardHandButtonHandler {
             acIndex = acIndex.replace("retain", "");
             retainButtons = true;
         }
-        boolean arvaxiCommander = false;
         if (acIndex.endsWith("arvaxicommander")) {
             acIndex = acIndex.replace("arvaxicommander", "");
             arvaxiCommander = true;
@@ -178,7 +196,7 @@ class ActionCardHandButtonHandler {
                         buttons2);
             }
             ActionCardHelper.serveReverseEngineerButtons(game, player, List.of(acID));
-            ArvaxiAgentButtonHandler.postInitialButtons(game, player, acID);
+            ArvaxiLeaderHandler.postAgentOfferButtons(game, player, acID);
             if (player.hasAbility("scrap_metal")) {
                 String message2 =
                         player.getRepresentationUnfogged() + ", please **Scrap Metal** by using these buttons.";

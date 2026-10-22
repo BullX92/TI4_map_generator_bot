@@ -14,8 +14,13 @@ import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersAbilitiesHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.natau.NatauAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersFactionTechsHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.oblivion.OblivionAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.revenant.RevenantPromissoryHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.verydith.VerydithPromissoryHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.veylor.VeylorAbilitiesHandler;
+import ti4.discord.interactions.buttons.handlers.unit.monuments.MonumentsPoKButtonHandler;
 import ti4.game.Game;
 import ti4.game.Leader;
 import ti4.game.Planet;
@@ -43,6 +48,7 @@ import ti4.service.button.ReactionService;
 import ti4.service.emoji.CardEmojis;
 import ti4.service.emoji.FactionEmojis;
 import ti4.service.emoji.PlanetEmojis;
+import ti4.service.fow.FowScoringStatusService;
 import ti4.service.fow.GMService;
 import ti4.service.info.ListPlayerInfoService;
 import ti4.service.info.SecretObjectiveInfoService;
@@ -50,6 +56,10 @@ import ti4.service.objectives.ScorePublicObjectiveService;
 import ti4.service.planet.EronousPlanetService;
 import ti4.service.turn.StartTurnService;
 import ti4.settings.users.UserSettingsManager;
+import ti4.spring.service.gameevent.GameEventDraft;
+import ti4.spring.service.gameevent.GameEventService;
+import ti4.spring.service.gameevent.GameEventType;
+import ti4.spring.service.gameevent.GameSubEvent;
 
 @UtilityClass
 public final class StatusHelper {
@@ -153,7 +163,14 @@ public final class StatusHelper {
     }
 
     public static void beginScoring(GenericInteractionCreateEvent event, Game game, MessageChannel gameChannel) {
+        // On a re-entered scoring phase, commit the previously staged scores instead of letting open() wipe them.
+        commitStatusScoringEvent(game);
         game.setPhaseOfGame("statusScoring");
+        VeylorAbilitiesHandler.returnUnassignedTightSchedulingAgendas(game);
+        VerydithPromissoryHandler.returnPactRenewedAtStartOfStatus(game);
+        RevenantPromissoryHandler.returnRebrithAtStartOfStatus(game);
+        GameEventService.commit(game, GameEventType.PHASE_STARTED, null, Map.of("phase", "status"));
+        GameEventDraft.open(game);
         game.setStoredValue("startTimeOfRound" + game.getRound() + "StatusScoring", System.currentTimeMillis() + "");
         GMService.logActivity(game, "**StatusScoring** Phase for Round " + game.getRound() + " started.", true);
         for (Player player : game.getRealPlayers()) {
@@ -170,6 +187,9 @@ public final class StatusHelper {
         for (Player player : game.getRealPlayers()) {
             if (player.getTotalVictoryPoints() > maxVP) {
                 maxVP = player.getTotalVictoryPoints();
+            }
+            if (player.hasAbility("paradigm")) {
+                NatauAbilityHandler.resolveParadigmStartOfStatus(event, game, player);
             }
             if (game.playerHasLeaderUnlockedOrAlliance(player, "vadencommander")) {
                 int numScoredSOs = player.getSoScored();
@@ -247,6 +267,13 @@ public final class StatusHelper {
                         player.getRepresentationUnfogged()
                                 + ", a reminder this is the window to use the _Eerie Predictions_.");
             }
+            if (player.hasAbility("ignorant_discoveries") && player.getStrategicCC() > 0) {
+                MessageHelper.sendMessageToChannelWithButtons(
+                        player.getCorrectChannel(),
+                        player.getRepresentation()
+                                + ", you may use the button below to resolve _Ignorant Discoveries_. A strategy token will automatically be deducted.",
+                        OblivionAbilityHandler.getIgnorantDiscoveriesButtons(event, player));
+            }
         }
         String key2 = "queueToScorePOs";
         String key3 = "potentialScorePOBlockers";
@@ -265,7 +292,7 @@ public final class StatusHelper {
             MessageHelper.sendMessageToChannelWithButtons(
                     event.getMessageChannel(),
                     game.getPing()
-                            + ", players will be forced to score in order. Any preemptive scores will be queued. You may turn this off at any time by pressing this button.",
+                            + ", players will be forced to score in order. Any preemptive scores will be queued. In the event of a bug, you may turn this off at any time by pressing this button, but that will not resolve the queue, it will just abandon it.",
                     buttons);
             for (Player player : getPlayersInScoringOrder(game)) {
                 game.setStoredValue(key3, game.getStoredValue(key3) + player.getFaction() + "*");
@@ -436,6 +463,10 @@ public final class StatusHelper {
         }
         MessageHelper.sendMessageToChannelWithPersistentReacts(
                 gameChannel, messageText, game, poButtons, GameMessageType.STATUS_SCORING);
+        if (FoWHelper.isFogQol01(game)) {
+            offerEdynCommanderDrawPrivately(game);
+            FowScoringStatusService.postForAllPlayers(game);
+        }
 
         boolean allReacted = true;
         for (Player player : game.getRealPlayers()) {
@@ -486,9 +517,7 @@ public final class StatusHelper {
         if (game.getRealPlayers().stream().anyMatch(player -> player.hasTech("benetrunnersdm"))) {
             NetrunnersFactionTechsHandler.resolveDataMining(game);
         }
-        if (game.getRealPlayers().stream().anyMatch(player -> player.hasAbility("ransomware"))) {
-            NetrunnersAbilitiesHandler.offerRansomwareButtons(game);
-        }
+        MonumentsPoKButtonHandler.sendSpireOfIxthButtons(game);
 
         for (Player player : game.getRealPlayers()) {
             List<String> pns = new ArrayList<>(player.getPromissoryNotesInPlayArea());
@@ -516,7 +545,23 @@ public final class StatusHelper {
                         player.getCorrectChannel(),
                         player.getRepresentationUnfogged()
                                 + ", you may use the button to pay 3 trade goods and get a technology, using _Sentient Datapool_.",
-                        List.of(Buttons.GET_A_TECH));
+                        List.of(Buttons.GET_A_TECH, Buttons.DONE_DELETE_BUTTONS));
+            }
+
+            if (player.hasTech("dsaugug")) {
+                MessageHelper.sendMessageToChannel(
+                        player.getCorrectChannel(),
+                        player.getRepresentationUnfogged()
+                                + ", this is a reminder that you can score an additional public objective instead of a secret objective due to your Psychographics.");
+            }
+            if (player.hasTech("tf-sentientdatapool") && player.getTg() > 3) {
+                MessageHelper.sendMessageToChannelWithButtons(
+                        player.getCorrectChannel(),
+                        player.getRepresentationUnfogged()
+                                + ", you may use the button to pay 4 trade goods and get an ability, using _Sentient Datapool_.",
+                        List.of(
+                                Buttons.green("drawSingularNewSpliceCard_ability_sentient", "Pay 4tg for Ability"),
+                                Buttons.DONE_DELETE_BUTTONS));
             }
             Leader playerLeader = player.getLeader("kyrohero").orElse(null);
             if (player.hasLeader("kyrohero")
@@ -596,7 +641,6 @@ public final class StatusHelper {
         sendHoldingCompanyButtons(game);
         sendEntropicScarButtons(game);
         sendNeuralParasiteButtons(game);
-        sendRemoveBreachButtons(game);
         SowingReapingService.sendTheSowingButtons(game);
         SowingReapingService.resolveTheReaping(game);
 
@@ -604,7 +648,7 @@ public final class StatusHelper {
         resolveSolFlagship(game);
     }
 
-    private static void sendRemoveBreachButtons(Game game) {
+    public static void sendRemoveBreachButtons(Game game) {
         Predicate<Tile> hasBreach = t -> t.getSpaceUnitHolder().getTokenList().contains(Constants.TOKEN_BREACH_ACTIVE);
         Function<Player, Predicate<Tile>> hasPlayerShips = p -> (t -> FoWHelper.playerHasActualShipsInSystem(p, t));
         for (Player p : game.getRealPlayers()) {
@@ -697,6 +741,10 @@ public final class StatusHelper {
                     int remaining = game.changeCommsOnPlanet(1, planet.getName());
 
                     String msg = "A commodity was placed upon the Monument to the Ages at " + planet.getName() + ".";
+                    // TODO FOG LEAK: unconditionally reveals this planet's identity/location to
+                    // game.getMainGameChannel()
+                    // even in FoW games, regardless of what any player has actually explored. Should route through a
+                    // fog-aware channel helper (e.g. GMService/FoWHelper) when game.isFowMode().
                     MessageHelper.sendMessageToChannel(game.getMainGameChannel(), msg);
                     if (remaining % 3 == 0) {
                         String msg2 = "The Monument to the Ages on the planet of "
@@ -728,7 +776,9 @@ public final class StatusHelper {
     private static void sendEntropicScarButtons(Game game) {
         Map<Player, Integer> scars = new HashMap<>();
         for (Tile t : game.getTileMap().values()) {
-            if (t.isScar()) {
+            boolean isAurelionSystem = t.getSpaceUnitHolder().getUnitKeys().stream()
+                    .anyMatch(unitKey -> unitKey.unitType() == UnitType.Aurelion);
+            if (t.isScar() || isAurelionSystem) {
                 for (Player p : game.getRealPlayers()) {
                     if (Tile.tileHasPlayerShips(p).test(t)) {
                         scars.put(p, scars.getOrDefault(p, 0) + 1);
@@ -759,35 +809,39 @@ public final class StatusHelper {
 
             int ccs = player.getStrategicCC();
             int techs = buttons.size() - 1;
-            if (game.isTwilightsFallMode() && techs == 0) {
-                if (player.hasRelicReady("emelpar") || player.hasRelicReady("absol_emelpar")) {
-                    MessageHelper.sendMessageToChannel(
-                            player.getCorrectChannel(),
-                            player.getRepresentationUnfogged()
-                                    + ", you have ships in an Entropic Scar anomaly. However, you have no faction technologies left to gain."
-                                    + " _Scepter of Emelpar_ has been exhausted and you have been given +2 command tokens in your strategy pool.");
-                    player.setStrategicCC(player.getStrategicCC() + 2);
-                    player.addExhaustedRelic("emelpar");
-                    player.addExhaustedRelic("absol_emelpar");
-                } else if (player.getStrategicCC() > 0) {
-                    MessageHelper.sendMessageToChannel(
-                            player.getCorrectChannel(),
-                            player.getRepresentationUnfogged()
-                                    + ", you have ships in an Entropic Scar anomaly. However, you have no faction technologies left to gain."
-                                    + " You have been given net +1 command tokens in your strategy pool.");
-                    player.setStrategicCC(player.getStrategicCC() + 1);
-                    ButtonHelperCommanders.resolveMuaatCommanderCheck(player, game, null, "Entropic Scar");
+            for (int i = 0; i < entry.getValue(); i++) {
+                if (game.isTwilightsFallMode() && (techs == 0 || i > techs - 1)) {
+                    if (player.hasRelicReady("emelpar") || player.hasRelicReady("absol_emelpar")) {
+                        MessageHelper.sendMessageToChannel(
+                                player.getCorrectChannel(),
+                                player.getRepresentationUnfogged()
+                                        + ", you have ships in an Entropic Scar anomaly. However, you have no faction technologies left to gain."
+                                        + " _Scepter of Emelpar_ has been exhausted and you have been given +2 command tokens in your strategy pool.");
+                        player.setStrategicCC(player.getStrategicCC() + 2);
+                        player.addExhaustedRelic("emelpar");
+                        player.addExhaustedRelic("absol_emelpar");
+                    } else if (player.getStrategicCC() > 0) {
+                        MessageHelper.sendMessageToChannel(
+                                player.getCorrectChannel(),
+                                player.getRepresentationUnfogged()
+                                        + ", you have ships in an Entropic Scar anomaly. However, you have no faction technologies left to gain."
+                                        + " You have been given net +1 command tokens in your strategy pool.");
+                        player.setStrategicCC(player.getStrategicCC() + 1);
+                        ButtonHelperCommanders.resolveMuaatCommanderCheck(player, game, null, "Entropic Scar");
+                    }
+                    continue;
                 }
-                continue;
-            }
-            String scarMessage = player.getRepresentationUnfogged()
-                    + " You have ships in an Entropic Scar anomaly. You may use these buttons to spend a token from your strategy pool to gain one of your faction technologies.";
-            scarMessage +=
-                    "You currently have " + StringHelper.pluralize(ccs, "command token") + " in your strategy pool.";
-            if (player.hasRelicReady("emelpar") || player.hasRelicReady("absol_emelpar"))
-                scarMessage += "You also have the _" + RelicHelper.sillySpelling()
-                        + "_ available to exhaust (this will be spent first).";
-            for (int i = 0; i < techs && i < entry.getValue(); i++) {
+                if (i > techs - 1) {
+                    continue;
+                }
+                String scarMessage = player.getRepresentationUnfogged()
+                        + " You have ships in an Entropic Scar anomaly. You may use these buttons to spend a token from your strategy pool to gain one of your faction technologies.";
+                scarMessage += "You currently have " + StringHelper.pluralize(ccs, "command token")
+                        + " in your strategy pool.";
+                if (player.hasRelicReady("emelpar") || player.hasRelicReady("absol_emelpar"))
+                    scarMessage += "You also have the _" + RelicHelper.sillySpelling()
+                            + "_ available to exhaust (this will be spent first).";
+
                 if (i > 0) scarMessage = "Get another one!";
                 MessageHelper.sendMessageToChannelWithButtons(player.getCorrectChannel(), scarMessage, buttons);
             }
@@ -818,6 +872,26 @@ public final class StatusHelper {
                     }
                 }
             }
+        }
+    }
+
+    private static void offerEdynCommanderDrawPrivately(Game game) {
+        for (Player player : game.getRealPlayers()) {
+            if (!game.playerHasLeaderUnlockedOrAlliance(player, "edyncommander")
+                    || player.getPrivateChannel() == null) {
+                continue;
+            }
+            List<Button> buttons = List.of(
+                    Buttons.gray(
+                            player.factionButtonChecker() + "edynCommanderSODraw",
+                            "Draw Secret Objective Instead of Scoring Public Objective",
+                            FactionEmojis.edyn),
+                    Buttons.DONE_DELETE_BUTTONS);
+            MessageHelper.sendMessageToChannelWithButtons(
+                    player.getPrivateChannel(),
+                    player.getRepresentationUnfogged()
+                            + ", you may use Kadryn, the Edyn commander, to draw a secret objective instead of scoring a public objective.",
+                    buttons);
         }
     }
 
@@ -946,11 +1020,18 @@ public final class StatusHelper {
                 if (!game.isFowMode()) {
                     message += player2.getRepresentationUnfogged() + " is the one the game is currently waiting on.";
                 }
+                if (FoWHelper.isFogQol01(game)) {
+                    GMService.logPlayerActivity(
+                            game,
+                            player2,
+                            player2.getRepresentationNoPing() + " is blocking the public objective scoring queue.");
+                }
                 String poID = buttonID.replace(Constants.PO_SCORING, "");
                 try {
                     int poIndex = Integer.parseInt(poID);
                     if (!"action".equalsIgnoreCase(game.getPhaseOfGame())) {
                         game.setStoredValue(player.getFaction() + "round" + game.getRound() + "PO", "Queued");
+                        FowScoringStatusService.refresh(game, player);
                     }
                     game.setStoredValue(player.getFaction() + "queuedPOScore", "" + poIndex);
                 } catch (Exception e) {
@@ -1027,8 +1108,16 @@ public final class StatusHelper {
                             message += player2.getRepresentationUnfogged()
                                     + " is the one the game is currently waiting on.";
                         }
+                        if (FoWHelper.isFogQol01(game)) {
+                            GMService.logPlayerActivity(
+                                    game,
+                                    player2,
+                                    player2.getRepresentationNoPing()
+                                            + " is blocking the secret objective scoring queue.");
+                        }
                         if (!"action".equalsIgnoreCase(game.getPhaseOfGame())) {
                             game.setStoredValue(player.getFaction() + "round" + game.getRound() + "SO", "Queued");
+                            FowScoringStatusService.refresh(game, player);
                         }
                         MessageHelper.sendMessageToChannel(channel, message);
                         int soIndex = Integer.parseInt(soID);
@@ -1058,5 +1147,37 @@ public final class StatusHelper {
         }
         ButtonHelper.deleteMessage(event);
         ReactionCheckService.checkForAllReactions(event, game);
+    }
+
+    public static boolean isStatusScoring(Game game) {
+        return "statusScoring".equalsIgnoreCase(game.getPhaseOfGame());
+    }
+
+    /** Stages the score into the status-scoring draft when one is open, else commits a top-level event. */
+    public static void recordObjectiveScored(Game game, Player player, String objectiveId, String category) {
+        if (isStatusScoring(game)
+                && GameEventDraft.stage(
+                        game, new GameSubEvent.ObjectiveScored(player.getFaction(), objectiveId, category))) {
+            return;
+        }
+        GameEventService.commit(
+                game, GameEventType.OBJECTIVE_SCORED, player, Map.of("objectiveId", objectiveId, "category", category));
+    }
+
+    /**
+     * Commits the staged scoring sub-events as one STATUS_SCORING event. Safe to call from any status-scoring exit
+     * path: no-op outside the statusScoring phase (so it never drains an unrelated tactical draft) or when nothing
+     * was staged.
+     */
+    public static void commitStatusScoringEvent(Game game) {
+        if (!isStatusScoring(game)) {
+            return;
+        }
+        List<GameSubEvent> subEvents = GameEventDraft.drain(game);
+        if (subEvents.isEmpty()) {
+            return;
+        }
+        GameEventService.commit(
+                game, GameEventType.STATUS_SCORING, null, Map.of("subEvents", GameEventDraft.toJsonNode(subEvents)));
     }
 }

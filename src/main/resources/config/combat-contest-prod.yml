@@ -1,4 +1,4 @@
-enabled: true
+enabled: false
 
 candidateSelection:
   window:
@@ -7,7 +7,7 @@ candidateSelection:
   targetCandidatesPerHour: 8
 
 promotion:
-  enabled: true
+  enabled: false
   intervalSeconds: 5
 
 replayExecution:

@@ -6,12 +6,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
+import net.dv8tion.jda.api.components.MessageTopLevelComponent;
 import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.components.label.Label;
 import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
@@ -23,17 +25,20 @@ import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.discord.interactions.routing.ModalHandler;
 import ti4.game.Game;
 import ti4.game.Player;
-import ti4.helpers.AgendaHelper;
+import ti4.helpers.AgendaWhensAftersHelper;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.Constants;
+import ti4.helpers.DisplayType;
 import ti4.helpers.FoWHelper;
 import ti4.helpers.RandomHelper;
 import ti4.helpers.RelicHelper;
 import ti4.helpers.ThreadGetter;
+import ti4.image.MapRenderPipeline;
 import ti4.image.Mapper;
 import ti4.image.PositionMapper;
 import ti4.logging.BotLogger;
 import ti4.message.MessageHelper;
+import ti4.message.componentsV2.MessageV2Builder;
 import ti4.service.ShowGameService;
 import ti4.service.actioncard.SabotageService;
 import ti4.service.emoji.CardEmojis;
@@ -92,6 +97,24 @@ public final class GMService {
         return channels.isEmpty() ? game.getMainGameChannel() : channels.getFirst();
     }
 
+    public static TextChannel gmRoomOrNull(Game game) {
+        List<TextChannel> channels = game.getGuild().getTextChannelsByName(game.getName() + "-gm-room", true);
+        return channels.isEmpty() ? null : channels.getFirst();
+    }
+
+    private static void withActivityThread(Game game, Consumer<ThreadChannel> action) {
+        TextChannel gmRoom = gmRoomOrNull(game);
+        if (gmRoom == null) return;
+        ThreadGetter.getThreadInChannel(gmRoom, game.getName() + ACTIVITY_LOG_THREAD, true, false, action);
+    }
+
+    public static void sendMessageToGMRoom(Game game, String msg) {
+        TextChannel gmRoom = gmRoomOrNull(game);
+        if (gmRoom != null) {
+            MessageHelper.sendMessageToChannel(gmRoom, msg);
+        }
+    }
+
     public static void sendMessageToGMChannel(Game game, String msg, boolean ping) {
         if (ping) {
             msg += " - " + gmPing(game);
@@ -122,19 +145,49 @@ public final class GMService {
 
         String timestamp = "`[" + LocalDateTime.now().format(formatter) + "]` ";
         String log = timestamp + eventLog + (ping ? " - " + gmPing(game) : "");
-        ThreadGetter.getThreadInChannel(
-                getGMChannel(game), game.getName() + ACTIVITY_LOG_THREAD, true, false, threadChannel -> {
-                    if (jumpUrl != null) {
-                        MessageHelper.sendMessageToChannel(threadChannel, log + " - " + jumpUrl);
-                    } else if (player == null) {
-                        MessageHelper.sendMessageToChannel(threadChannel, log);
-                    } else {
-                        jumpToLatestMessage(
-                                player,
-                                latestJumpUrl ->
-                                        MessageHelper.sendMessageToChannel(threadChannel, log + " - " + latestJumpUrl));
-                    }
-                });
+        withActivityThread(game, threadChannel -> {
+            if (jumpUrl != null) {
+                MessageHelper.sendMessageToChannel(threadChannel, log + " - " + jumpUrl);
+            } else if (player == null) {
+                MessageHelper.sendMessageToChannel(threadChannel, log);
+            } else {
+                jumpToLatestMessage(
+                        player,
+                        latestJumpUrl ->
+                                MessageHelper.sendMessageToChannel(threadChannel, log + " - " + latestJumpUrl));
+            }
+        });
+    }
+
+    /** Posts a message to the FoW activity-log thread (inside the GM channel). No-op outside FoW. */
+    public static void postToActivityThread(Game game, String message) {
+        if (!game.isFowMode()) return;
+        withActivityThread(game, threadChannel -> MessageHelper.sendMessageToChannel(threadChannel, message));
+    }
+
+    /** Posts a components-V2 component to the FoW activity-log thread (inside the GM channel). No-op outside FoW. */
+    public static void postToActivityThread(Game game, MessageTopLevelComponent component) {
+        if (!game.isFowMode()) return;
+        withActivityThread(game, threadChannel -> {
+            MessageV2Builder builder = new MessageV2Builder(threadChannel);
+            builder.append(component);
+            builder.send();
+        });
+    }
+
+    /**
+     * Renders the full (unfogged) map and posts it into the FoW activity-log thread. The thread lives
+     * in the GM-only channel, so the unfogged view leaks nothing. A null render event keeps the map
+     * unfogged (see {@code MapGenerator.isFowModeActive}). No-op outside FoW.
+     */
+    public static void refreshMapInActivityThread(Game game) {
+        if (!game.isFowMode()) return;
+        MapRenderPipeline.queue(
+                game,
+                null,
+                DisplayType.all,
+                fileUpload -> withActivityThread(
+                        game, threadChannel -> MessageHelper.sendFileUploadToChannel(threadChannel, fileUpload)));
     }
 
     private static void jumpToLatestMessage(Player player, Consumer<String> callback) {
@@ -209,14 +262,14 @@ public final class GMService {
                 StringBuilder sbAfters = new StringBuilder("Following players have \"after\"s in hand:\n");
 
                 for (Player player : game.getRealPlayers()) {
-                    List<String> whens = AgendaHelper.getPossibleWhenNames(player);
+                    List<String> whens = AgendaWhensAftersHelper.getPossibleWhenNames(player);
                     if (!whens.isEmpty()) {
                         sbWhens.append("> ")
                                 .append(player.getRepresentationUnfoggedNoPing())
                                 .append(": ");
                         sbWhens.append(String.join(", ", whens)).append('\n');
                     }
-                    List<String> afters = AgendaHelper.getPossibleAfterNames(player);
+                    List<String> afters = AgendaWhensAftersHelper.getPossibleAfterNames(player);
                     if (!afters.isEmpty()) {
                         sbAfters.append("> ")
                                 .append(player.getRepresentationUnfoggedNoPing())
@@ -246,11 +299,12 @@ public final class GMService {
                     acs.append("__")
                             .append(player.getRepresentationUnfoggedNoPing())
                             .append("__\n");
-                    player.getActionCards().forEach((key, value) -> acs.append("> ")
-                            .append(Mapper.getActionCard(key).getNameRepresentation())
-                            .append(" (")
-                            .append(value)
-                            .append(")\n"));
+                    player.getActionCards()
+                            .forEach((key, value) -> acs.append("> ")
+                                    .append(Mapper.getActionCard(key).getNameRepresentation())
+                                    .append(" (")
+                                    .append(value)
+                                    .append(")\n"));
                 }
                 MessageHelper.sendMessageToChannel(event.getChannel(), acs.toString());
             }
@@ -260,11 +314,12 @@ public final class GMService {
                     pns.append("__")
                             .append(player.getRepresentationUnfoggedNoPing())
                             .append("__\n");
-                    player.getPromissoryNotes().forEach((key, value) -> pns.append("> ")
-                            .append(Mapper.getPromissoryNote(key).getNameRepresentation())
-                            .append(" (")
-                            .append(value)
-                            .append(")\n"));
+                    player.getPromissoryNotes()
+                            .forEach((key, value) -> pns.append("> ")
+                                    .append(Mapper.getPromissoryNote(key).getNameRepresentation())
+                                    .append(" (")
+                                    .append(value)
+                                    .append(")\n"));
                 }
                 MessageHelper.sendMessageToChannel(event.getChannel(), pns.toString());
             }
@@ -300,6 +355,39 @@ public final class GMService {
             sb.append("> ").append(player.getRepresentationUnfoggedNoPing()).append('\n');
         }
         MessageHelper.sendMessageToChannel(event.getChannel(), sb.toString());
+    }
+
+    @ButtonHandler(value = "gmQolSettings~MDL", save = false)
+    public static void qolSettings(ButtonInteractionEvent event, Game game) {
+        TextInput base = TextInput.create(FowAutoDeclineService.BASE_HOURS_KEY, TextInputStyle.SHORT)
+                .setValue(String.valueOf(FowAutoDeclineService.baseHours(game)))
+                .setRequiredRange(1, 6)
+                .build();
+        TextInput spread = TextInput.create(FowAutoDeclineService.SPREAD_HOURS_KEY, TextInputStyle.SHORT)
+                .setValue(String.valueOf(FowAutoDeclineService.spreadHours(game)))
+                .setRequiredRange(1, 6)
+                .build();
+        Modal modal = Modal.create("gmQolSettingsResolve", "Fog QoL 01 Settings")
+                .addComponents(
+                        Label.of("Auto-decline delay (hours)", base), Label.of("Random spread +/- (hours)", spread))
+                .build();
+        event.replyModal(modal).queue(Consumers.nop(), BotLogger::catchRestError);
+    }
+
+    @ModalHandler("gmQolSettingsResolve")
+    public static void resolveQolSettings(ModalInteractionEvent event, Game game) {
+        double base = FowAutoDeclineService.parseHours(
+                event.getValue(FowAutoDeclineService.BASE_HOURS_KEY).getAsString(),
+                FowAutoDeclineService.DEFAULT_BASE_HOURS);
+        double spread = FowAutoDeclineService.parseHours(
+                event.getValue(FowAutoDeclineService.SPREAD_HOURS_KEY).getAsString(),
+                FowAutoDeclineService.DEFAULT_SPREAD_HOURS);
+        game.setStoredValue(FowAutoDeclineService.BASE_HOURS_KEY, String.valueOf(base));
+        game.setStoredValue(FowAutoDeclineService.SPREAD_HOURS_KEY, String.valueOf(spread));
+        MessageHelper.sendMessageToChannel(
+                event.getChannel(),
+                "Players who cannot follow a strategy card are auto-declined after " + base + " hours +/- " + spread
+                        + " hours (random), or as soon as they react. Needs the **Fog QoL 01** option.");
     }
 
     private static void checkWhoHas(String acId, Game game, ButtonInteractionEvent event) {
@@ -355,7 +443,7 @@ public final class GMService {
         MessageHelper.sendMessageToChannel(
                 player.getCorrectChannel(),
                 player.getRepresentationUnfogged() + " GM has forced you to pass on \"when\"s.");
-        AgendaHelper.declineToQueueAWhen(game, event, player);
+        AgendaWhensAftersHelper.declineToQueueAWhen(game, event, player);
     }
 
     @ButtonHandler("declineToQueueAnAfterFowGM_")
@@ -365,7 +453,7 @@ public final class GMService {
         MessageHelper.sendMessageToChannel(
                 player.getCorrectChannel(),
                 player.getRepresentationUnfogged() + " GM has forced you to pass on \"after\"s.");
-        AgendaHelper.declineToQueueAnAfter(game, event, player);
+        AgendaWhensAftersHelper.declineToQueueAnAfter(game, event, player);
     }
 
     @ButtonHandler("fowCreateChannelFor_")

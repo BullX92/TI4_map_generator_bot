@@ -13,6 +13,7 @@ import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.game.Game;
 import ti4.logging.BotLogger;
+import ti4.service.fow.AnonymousCommsService;
 import ti4.service.fow.FOWPlusService;
 import ti4.service.fow.GMService;
 
@@ -20,11 +21,23 @@ import ti4.service.fow.GMService;
 public class FOWOptionService {
 
     private static final Pattern FOW_OPTION_ = Pattern.compile("fowOption_");
+    private static final int BUTTONS_PER_ROW = 5;
 
     public enum FOWOptionCategory {
-        GAME,
-        VISIBILITY,
-        OTHER;
+        GAME("Game"),
+        VISIBILITY("Visibility"),
+        MAP("Map"),
+        OTHER("Other"),
+        // Name must stay underscore-free: changeFOWOptions splits button IDs on "_" with the
+        // category as the first token, so an underscore here would break that parse.
+        PLAYERSTATS("Precise Player Stats");
+
+        @Getter
+        private final String title;
+
+        FOWOptionCategory(String title) {
+            this.title = title;
+        }
 
         static FOWOptionCategory fromString(String string) {
             for (FOWOptionCategory category : values()) {
@@ -37,32 +50,96 @@ public class FOWOptionService {
     }
 
     public enum FOWOption {
-        // Comm Options (max 5)
+        // Comm Options
         MANAGED_COMMS(FOWOptionCategory.GAME, "Managed comms", "Use managed player-to-player communication threads"),
         ALLOW_AGENDA_COMMS(
                 FOWOptionCategory.GAME,
                 "Allow comms in agenda",
                 "Managed player-to-player communication threads allow talking with everyone in Agenda Phase"),
+        ANONYMOUS_COMMS(
+                FOWOptionCategory.GAME,
+                "Anonymous comms",
+                "Bot-relayed comms that hide who plays which color; replaces Managed comms"),
         STATUS_SUMMARY(
                 FOWOptionCategory.GAME, "Status summary", "Prints explores info as summary thread in status homework"),
         HIDE_TOTAL_VOTES(FOWOptionCategory.GAME, "Hide total votes", "Hide total votes amount in agenda"),
         HIDE_VOTE_ORDER(FOWOptionCategory.GAME, "Hide voting order", "Hide player colors from vote order"),
+        NEW_TRANSACTIONS(
+                FOWOptionCategory.GAME,
+                "New transactions",
+                "Use the offer/accept transaction model instead of the legacy direct-send flow"),
+        FOG_QOL_01(
+                FOWOptionCategory.GAME,
+                "Fog QoL 01",
+                "Fog quality-of-life helpers: pre-decline strategy cards, auto status action cards, private reminders, GM waiting-on info"),
+        GM_TURN_MAP(
+                FOWOptionCategory.GAME,
+                "GM turn map",
+                "Post the unfogged map to the GM activity log at the end of every turn"),
 
-        // Visibility Options (max 5)
+        // Visibility Options
         BRIGHT_NOVAS(FOWOptionCategory.VISIBILITY, "Bright Novas", "Locations of Supernovas are always visible"),
         HIDE_EXPLORES(
                 FOWOptionCategory.VISIBILITY, "Hide Explore Decks", "Disables looking at explore and relic decks"),
         HIDE_MAP(FOWOptionCategory.VISIBILITY, "Hide Unexplored Map", "Hides unexplored (blue 0b) map tiles."),
         HIDE_PLAYER_INFOS(
                 FOWOptionCategory.VISIBILITY, "Hide Player Infos", "Hides anchored player info areas from the map."),
-        STATS_FROM_HS_ONLY(
+        HIDE_AC_DISCARD(
                 FOWOptionCategory.VISIBILITY,
+                "Hide AC Discard",
+                "Action card discard pile shows only cards that were played"),
+
+        // Map Options
+        CLASSIC_MAP_LAYOUT(
+                FOWOptionCategory.MAP,
+                "Classic map layout",
+                "Show the full classic map instead of framing it to what each player knows; map sectors are ignored"),
+        FRACTURE_SEPARATE_MAP(
+                FOWOptionCategory.MAP,
+                "Separate Fracture map",
+                "Show the Fracture as its own map segment instead of below the galaxy"),
+        MAP_CONNECTIONS(
+                FOWOptionCategory.MAP,
+                "Map connections",
+                "Under each sector map, show the known systems on other maps/sectors it connects to"),
+        GHOST_HEXES(
+                FOWOptionCategory.MAP,
+                "Ghost hexes",
+                "Faint numbered rings on unexplored hexes next to known space; players can hide them with /user fog_ghost_hexes"),
+
+        // Precise Player Stats Options
+        STATS_FROM_HS_ONLY(
+                FOWOptionCategory.PLAYERSTATS,
                 "Stats from HS",
                 "Only way to see players stats is to see their Home System"),
+        HIDE_STATS_VIA_FACTION_PN(
+                FOWOptionCategory.PLAYERSTATS,
+                "Hide Stats via Faction PN",
+                "A faction-specific promissory note in your play area no longer reveals that player's stats"),
+        HIDE_STATS_VIA_ALLIANCE(
+                FOWOptionCategory.PLAYERSTATS,
+                "Hide Stats via Alliance",
+                "An Alliance card in your play area no longer reveals that player's stats"),
+        HIDE_STATS_VIA_SFTT(
+                FOWOptionCategory.PLAYERSTATS,
+                "Hide Stats via SftT",
+                "A Support for the Throne card in your play area no longer reveals that player's stats"),
+        HIDE_STATS_VIA_MAHACT_CC(
+                FOWOptionCategory.PLAYERSTATS,
+                "Hide Stats via Mahact CC",
+                "A Mahact command counter in your fleet no longer reveals that player's stats"),
 
-        // Other Options (max 5)
+        // Other Options
         HIDE_PLAYER_NAMES(
                 FOWOptionCategory.OTHER, "Hide real names", "Completely hide player Discord names on the map"),
+        DISABLE_FRACTURE(
+                FOWOptionCategory.OTHER,
+                "Disable Fracture",
+                "The Fracture can never enter play. Same setting as `/game weird_game_setup no_fracture`"),
+        OPTIONAL_PILLAGABLE_TG(
+                FOWOptionCategory.OTHER,
+                "Optional Pillage-able TG",
+                "Prompt before auto-granting TG that could trigger Pillage (Stellar Genesis/Magmus, Rear Admiral Farran), even in Fog of War"),
 
         // Hidden from normal options
         FOW_PLUS(null, "FoW Plus Mode", "Hello darkness my old friend... WIP - ask Solax for details", false),
@@ -87,7 +164,7 @@ public class FOWOptionService {
             this.visible = visible;
         }
 
-        FOWOptionCategory getCategory() {
+        public FOWOptionCategory getCategory() {
             return category;
         }
 
@@ -95,7 +172,7 @@ public class FOWOptionService {
             return description;
         }
 
-        boolean isVisible() {
+        public boolean isVisible() {
             return visible;
         }
 
@@ -120,7 +197,7 @@ public class FOWOptionService {
 
     private static void offerFOWOptionButtons(
             ButtonInteractionEvent event, Game game, FOWOptionCategory selectedCategory) {
-        StringBuilder sb = new StringBuilder("### Change FoW " + selectedCategory + " Options\n\n");
+        StringBuilder sb = new StringBuilder("### Change FoW " + selectedCategory.getTitle() + " Options\n\n");
         if (FOWPlusService.isActive(game)) {
             sb.append("_FoW+ mode is active. Some options are forced and cannot be changed._\n\n");
         }
@@ -129,9 +206,9 @@ public class FOWOptionService {
         List<Button> categoryButtons = new ArrayList<>();
         for (FOWOptionCategory category : FOWOptionCategory.values()) {
             if (category == selectedCategory) {
-                categoryButtons.add(Buttons.gray("fowOptionCategory_" + category, category.name() + " Options"));
+                categoryButtons.add(Buttons.gray("fowOptionCategory_" + category, category.getTitle() + " Options"));
             } else {
-                categoryButtons.add(Buttons.blue("fowOptionCategory_" + category, category.name() + " Options"));
+                categoryButtons.add(Buttons.blue("fowOptionCategory_" + category, category.getTitle() + " Options"));
             }
         }
         categoryButtons.add(Buttons.gray("deleteButtons", "Done"));
@@ -142,7 +219,7 @@ public class FOWOptionService {
                 continue;
             }
 
-            boolean currentValue = game.getFowOption(option);
+            boolean currentValue = isEnabled(game, option);
             sb.append(valueRepresentation(currentValue))
                     .append(" **")
                     .append(option.getTitle())
@@ -163,8 +240,16 @@ public class FOWOptionService {
                                     "Enable " + option.getTitle()));
         }
 
-        rows.add(ActionRow.of(optionButtons));
-        rows.add(ActionRow.of(categoryButtons));
+        if (selectedCategory == FOWOptionCategory.GAME) {
+            optionButtons.add(Buttons.blue("gmQolSettings~MDL", "Fog QoL 01 settings..."));
+            if (game.getFowOption(FOWOption.ANONYMOUS_COMMS)) {
+                optionButtons.add(Buttons.blue(AnonymousCommsService.SETTINGS_BUTTON, "Anonymous comms settings..."));
+            }
+        }
+
+        // An ActionRow holds at most 5 buttons, and the message at most 5 rows - two of which are category rows.
+        addRows(rows, optionButtons);
+        addRows(rows, categoryButtons);
 
         if (event == null) {
             GMService.getGMChannel(game)
@@ -179,6 +264,12 @@ public class FOWOptionService {
         }
     }
 
+    private static void addRows(List<ActionRow> rows, List<Button> buttons) {
+        for (int i = 0; i < buttons.size(); i += BUTTONS_PER_ROW) {
+            rows.add(ActionRow.of(buttons.subList(i, Math.min(i + BUTTONS_PER_ROW, buttons.size()))));
+        }
+    }
+
     @ButtonHandler("fowOption_")
     public static void changeFOWOptions(ButtonInteractionEvent event, Game game, String buttonID) {
         String[] parts = FOW_OPTION_.split(buttonID)[1].split("_", 3);
@@ -188,8 +279,31 @@ public class FOWOptionService {
 
         FOWOption fowOption = FOWOption.fromString(option);
         boolean newValue = Boolean.parseBoolean(value);
-        game.setFowOption(fowOption, newValue);
+        writeOption(game, fowOption, newValue);
         offerFOWOptionButtons(event, game, category);
+    }
+
+    /** DISABLE_FRACTURE reads/writes noFractureMode, so this and {@code weird_game_setup no_fracture} cannot diverge. */
+    public static boolean isEnabled(Game game, FOWOption option) {
+        if (option == FOWOption.DISABLE_FRACTURE) return game.isNoFractureMode();
+        return game.getFowOption(option);
+    }
+
+    private static void writeOption(Game game, FOWOption option, boolean value) {
+        if (option == FOWOption.DISABLE_FRACTURE) {
+            game.setNoFractureMode(value);
+        } else {
+            game.setFowOption(option, value);
+        }
+        if (value) disableConflictingCommsOption(game, option);
+    }
+
+    private static void disableConflictingCommsOption(Game game, FOWOption enabled) {
+        if (enabled == FOWOption.ANONYMOUS_COMMS) {
+            game.setFowOption(FOWOption.MANAGED_COMMS, false);
+            AnonymousCommsService.offerManagedThreadCleanup(game);
+        }
+        if (enabled == FOWOption.MANAGED_COMMS) game.setFowOption(FOWOption.ANONYMOUS_COMMS, false);
     }
 
     @ButtonHandler("fowOptionCategory_")

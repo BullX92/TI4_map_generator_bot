@@ -61,7 +61,10 @@ public final class TeHelperUnits {
         UnitHolder space = tile.getSpaceUnitHolder();
         boolean hasBreach = space.getTokenList().contains(Constants.TOKEN_BREACH_ACTIVE);
         boolean hasShips = tile.containsPlayersUnitsWithModelCondition(player, UnitModel::isNonFighterShip);
-        if (!hasBreach && !(game.isTwilightKart() && hasShips)) {
+
+        // isTwilightKart is Deprecated. Once removed, just check for DestroyerCup here
+        boolean tkRevenant = game.isTwilightKart() || game.isTkDestroyerCup();
+        if (!hasBreach && !(tkRevenant && hasShips)) {
             MessageHelper.sendMessageToChannel(
                     player.getCorrectChannel(), "The system must have an active Breach in it to deploy a Revenant.");
             return;
@@ -71,7 +74,7 @@ public final class TeHelperUnits {
             AddUnitService.addUnits(event, game.getTileFromPlanet(planet), game, player.getColor(), "1 mech " + planet);
             String planetRep = Helper.getPlanetRepresentation(planet, game);
             String boringMsg = player.getRepresentation(true, false) + " deployed a Revenant on " + planetRep + ".";
-            String flavorMsg = "Out of the cold depths of " + (game.isTwilightKart() ? "space" : "the active breach");
+            String flavorMsg = "Out of the cold depths of " + (tkRevenant ? "space" : "the active breach");
             flavorMsg += ", a Rebellion _Revenant_ has emerged, landing on " + planetRep + ".";
 
             String msg = RandomHelper.isOneInX(20) ? flavorMsg : boringMsg;
@@ -81,10 +84,12 @@ public final class TeHelperUnits {
     }
 
     public static boolean affectedByQuietus(Game game, Player player, Tile tile) {
+        if (player.hasTech("dsxinystar")) return false;
         return affectedByQuietus(game, player, tile.getSpaceUnitHolder());
     }
 
     public static boolean affectedByQuietus(Game game, Player player, UnitHolder uh) {
+        if (player.hasTech("dsxinystar")) return false;
         // Get the actual space unit holder if able
         if (!"space".equals(uh.getName())) {
             Tile t = game.getTileFromPlanet(uh.getName());

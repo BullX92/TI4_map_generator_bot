@@ -7,9 +7,12 @@ import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import ti4.discord.interactions.commands.GameStateSubcommand;
 import ti4.game.Game;
+import ti4.game.Player;
+import ti4.helpers.ActionCardHelper;
 import ti4.helpers.Constants;
 import ti4.message.MessageHelper;
 import ti4.service.decks.ShowActionCardsService;
+import ti4.service.testbed.TestBedService;
 
 class ShowGarboziaActionCards extends GameStateSubcommand {
 
@@ -21,6 +24,12 @@ class ShowGarboziaActionCards extends GameStateSubcommand {
     @Override
     public void execute(SlashCommandInteractionEvent event) {
         Game game = getGame();
+        Player viewer = TestBedService.resolveActingPlayer(
+                game, event, game.getPlayer(event.getUser().getId()));
+        if (ActionCardHelper.hidesUnplayedDiscards(game, viewer) && (viewer == null || !viewer.hasPlanet("garbozia"))) {
+            MessageHelper.replyToMessage(event, "You are not authorized to use this command.");
+            return;
+        }
         boolean showFullText = event.getOption(Constants.SHOW_FULL_TEXT, false, OptionMapping::getAsBoolean);
         String garboziaText = ShowActionCardsService.getGarboziaDiscardText(game, showFullText);
         MessageHelper.sendMessageToChannel(

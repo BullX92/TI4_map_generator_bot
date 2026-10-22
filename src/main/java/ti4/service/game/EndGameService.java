@@ -3,6 +3,7 @@ package ti4.service.game;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import lombok.experimental.UtilityClass;
@@ -23,6 +24,8 @@ import ti4.helpers.DisplayType;
 import ti4.helpers.Helper;
 import ti4.helpers.PlayerTitleHelper;
 import ti4.helpers.RepositoryDispatchEvent;
+import ti4.helpers.StatusHelper;
+import ti4.helpers.StringHelper;
 import ti4.helpers.ThreadGetter;
 import ti4.helpers.async.RoundSummaryHelper;
 import ti4.image.MapRenderPipeline;
@@ -32,19 +35,26 @@ import ti4.message.GameMessageManager;
 import ti4.message.MessageHelper;
 import ti4.service.async.RoleService;
 import ti4.service.emoji.ColorEmojis;
+import ti4.service.fow.FogGameSummaryService;
+import ti4.service.fow.setup.FowSetupWizardService;
 import ti4.service.statistics.game.WinningPathComparisonService;
 import ti4.service.statistics.game.WinningPathHelper;
 import ti4.service.statistics.game.WinningPathPersistenceService;
 import ti4.service.tigl.TiglReportService;
 import ti4.spring.api.image.GameImageService;
 import ti4.spring.context.SpringContext;
+import ti4.spring.service.gameevent.GameEventService;
+import ti4.spring.service.gameevent.GameEventType;
 
 @UtilityClass
 public class EndGameService {
 
+    public static final String MOST_POINTS_END_GAME_BUTTON_ID = "endGameMostPoints";
+
     public static void secondHalfOfGameEnd(
             GenericInteractionCreateEvent event, Game game, boolean publish, boolean archiveChannels, boolean rematch) {
         String gameName = game.getName();
+        List<Player> fogGameMasters = fogGameMasters(game);
         List<Role> gameRoles = event.getGuild().getRolesByName(gameName, true);
         boolean deleteRole = true;
         if (gameRoles.size() > 1) {
@@ -57,6 +67,14 @@ public class EndGameService {
             MessageHelper.replyToMessage(
                     event, "No roles match the game name (" + gameName + ") - no role will be deleted.");
             deleteRole = false;
+        }
+        if (!game.isHasEnded()) {
+            // The game-winning objective may have just been staged into the status-scoring draft.
+            StatusHelper.commitStatusScoringEvent(game);
+            List<String> winners =
+                    game.getWinnersOnceEnded().stream().map(Player::getFaction).toList();
+            GameEventService.commit(
+                    game, GameEventType.GAME_ENDED, null, winners.isEmpty() ? Map.of() : Map.of("winner", winners));
         }
 
         // Do not publish games that never really took off
@@ -152,7 +170,7 @@ public class EndGameService {
                 threadChannel.getManager().setArchived(true).queue(Consumers.nop(), BotLogger::catchRestError);
             }
         }
-        gameEndStuff(game, event, publish);
+        gameEndStuff(game, event, publish, fogGameMasters);
 
         // GET BOTHELPER LOUNGE
         List<TextChannel> bothelperLoungeChannels = JdaService.guildPrimary.getTextChannelsByName("staff-lounge", true);
@@ -183,15 +201,59 @@ public class EndGameService {
         }
     }
 
+    public static boolean objectivesHaveRunOut(Game game) {
+        if (game.isRedTapeMode() || game.isCivilizedSocietyMode()) {
+            return false;
+        }
+        var endGameDeck =
+                game.isOmegaPhaseMode() ? game.getPublicObjectives1Peekable() : game.getPublicObjectives2Peekable();
+        var endGameRound = game.isOmegaPhaseMode() ? 9 : 7;
+        return game.getRound() > endGameRound || endGameDeck.isEmpty();
+    }
+
+    public static void recordMostPointsWinner(Game game, MessageChannel channel) {
+        Optional<Player> winner = game.getMostPointsWinner();
+        if (winner.isEmpty()) {
+            MessageHelper.sendMessageToChannel(
+                    channel,
+                    "No winner has been recorded: the players tied for the most victory points could not be separated by initiative, so this game will end without a winner.");
+            return;
+        }
+        game.recordWinner(winner.get());
+        MessageHelper.sendMessageToChannel(
+                channel,
+                winner.get().getRepresentationNoPing() + " has been recorded as the winner with "
+                        + StringHelper.pluralize(winner.get().getTotalVictoryPoints(), "victory point")
+                        + ", the most of any player (ties go to the earliest initiative).");
+    }
+
     static void gameEndStuff(Game game, GenericInteractionCreateEvent event, boolean publish) {
+        gameEndStuff(game, event, publish, fogGameMasters(game));
+    }
+
+    private static List<Player> fogGameMasters(Game game) {
+        return isAnyFog(game) ? game.getPlayersWithGMRole() : List.of();
+    }
+
+    private static boolean isAnyFog(Game game) {
+        return game.isFowMode() || game.isLightFogMode();
+    }
+
+    private static void gameEndStuff(
+            Game game, GenericInteractionCreateEvent event, boolean publish, List<Player> fogGameMasters) {
         String gameName = game.getName();
 
         game.setHasEnded(true);
         game.setEndedDate(System.currentTimeMillis());
         game.setAutoPing(false);
         game.setAutoPingSpacer(0);
+        FogGameSummaryService.rememberGameMasters(game, fogGameMasters);
 
         GameMessageManager.remove(List.of(game.getName()));
+
+        if (game.isFowMode()) {
+            FowSetupWizardService.clearStateOnGameEnd(game);
+        }
 
         if (!game.getRealPlayers().isEmpty() && !game.isFowMode() && !game.islandMode()) {
             PlayerTitleHelper.offerEveryoneTitlePossibilities(game);
@@ -200,6 +262,9 @@ public class EndGameService {
         MessageHelper.sendMessageToChannel(event.getMessageChannel(), "**Game: `" + gameName + "` has ended!**");
 
         writeChronicle(game, event, publish);
+        if (isAnyFog(game) && publish && !game.getRealPlayers().isEmpty()) {
+            FogGameSummaryService.postSettingsLog(game, fogGameMasters);
+        }
         WinningPathPersistenceService.addGame(game);
     }
 
@@ -264,6 +329,7 @@ public class EndGameService {
                 MessageHelper.sendMessageToChannel(t, gameEndText);
                 sendFeedbackMessage(t, game);
                 sendRoundSummariesToThread(t, game);
+                TiglReportService.handleTiglReporting(game, t);
             });
         }
     }
@@ -362,7 +428,7 @@ public class EndGameService {
         sb.append('\n');
         if (game.isFowMode()) {
             sb.append("**GM:** ");
-            for (Player gm : game.getPlayersWithGMRole()) {
+            for (Player gm : FogGameSummaryService.gameMasters(game)) {
                 appendUserName(sb, gm);
                 sb.append(' ');
             }

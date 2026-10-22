@@ -8,6 +8,7 @@
         "abilityWindow": "When a player draws a card",
         "abilityText": "You may exhaust this card to allow that player to place that card on the bottom of corresponding deck and draw another card from the top of that deck instead. If that player is another player, gain 1 commodity.",
         "unlockCondition": "Always Unlocked",
+        "notes": "`/game place_drawable_card` lets you choose the deck, enter the card ID, then choose top or bottom for its deck.",
         "source": "blue_reverie"
     },
     {
@@ -62,7 +63,7 @@
         "title": "Orator",
         "abilityWindow": "When a player exhausts a planet during the agenda phase",
         "abilityText": "Exhaust this card to allow that player to treat the combined value of that planet's resources and influence as if it were resources or influence. Then, ready that planet.",
-        "notes": "Not automated in the bot yet. You can add votes with the modify votes button before final submission, and ready planet and exhaust agent with slash commands.",
+        "notes": "Exhaust the planet first, then use this.",
         "unlockCondition": "Always Unlocked",
         "source": "blue_reverie"
     },
@@ -83,7 +84,7 @@
         "type": "agent",
         "name": "Drift-Yol Khas",
         "title": "The Rat",
-        "abilityWindow": "ACTION",
+        "abilityWindow": "ACTION:",
         "abilityText": "Exhaust this card to allow 1 player to place up to 2 neutral destroyers or 1 neutral cruiser in a system that is in or adjacent to a system that contains their units; resolve space combat in that system.",
         "unlockCondition": "Always Unlocked",
         "source": "blue_reverie"
@@ -290,8 +291,8 @@
         "name": "Cardossa Flight",
         "title": "Pirate Queen",
         "abilityName": "Todlys Unbound - The Leviathan",
-        "abilityWindow": "ACTION:",
-        "abilityText": "Exhaust this card to place 1 neutral war sun in a system that contains neutral units or move 1 neutral ship to an adjacent system; resolve space combat in that system. Neutral war suns have the abilities on the Leviathan ability card.",
+        "abilityWindow": "When you pass:",
+        "abilityText": "When you pass, you may place 1 neutral war sun in a system that contains neutral units. Then, for each secret objective you have scored, you may resolve 1 tactical action as if you control all neutral units, instead of your own.\nNeutral war suns have the abilities on the Leviathan ability card.\n\nLeviathan:\nDouble hits produced by this unit's combat rolls during the first round of combat. If this unit produces 1 or more hits during a round of combat, cancel 2 hits produced against it.",
         "unlockCondition": "Have 3 scored objectives.",
         "source": "blue_reverie"
     },
@@ -305,6 +306,58 @@
         "abilityWindow": "ACTION:",
         "abilityText": "Attach this card to a revealed objective. A player with the fewest victory points may score this objective without fulfilling its requirements; after a player scores this objective, the Toldar player may draw 1 secret objective.",
         "unlockCondition": "Have 3 scored objectives.",
+        "source": "blue_reverie"
+    },
+    {
+        "id": "edynagent_br",
+        "faction": "edyn",
+        "type": "agent",
+        "name": "Allant",
+        "title": "Elder Voice",
+        "abilityWindow": "When a player commits units to a planet:",
+        "abilityText": "You may exhaust this card to allow that player to place those units into coexistence instead.",
+        "unlockCondition": "Always Unlocked",
+        "homebrewReplacesID": "edynagent",
+        "source": "blue_reverie"
+    },
+    {
+        "id": "gheminacommander_br",
+        "faction": "ghemina",
+        "type": "commander",
+        "name": "Jarl Vel & Jarl Jotrun",
+        "title": "Dual Raid Leaders",
+        "abilityWindow": "While you are the active player:",
+        "abilityText": "Players that have two or fewer command tokens on the game board cannot cancel hits your units or abilities produce.",
+        "unlockCondition": "Have 2 flagships on the game board.",
+        "homebrewReplacesID": "gheminacommander",
+        "source": "blue_reverie",
+        "shortName": "Jarls Vel & Jotrun"
+    },
+    {
+        "id": "yinhero_br",
+        "faction": "yin",
+        "type": "hero",
+        "name": "Dannel of the Tenth",
+        "tfName": "Blessing of the Yin",
+        "title": "High Priest of Yin",
+        "abilityName": "Quantum Dissemination: Blessing of the Yin",
+        "abilityWindow": "ACTION:",
+        "abilityText": "Commit up to 3 infantry from your reinforcements to any non-home, non-legendary planets and resolve invasions on those planets; players cannot use SPACE CANNON against those units. Then, purge this card.",
+        "unlockCondition": "Have 3 scored objectives.",
+        "homebrewReplacesID": "yinhero",
+         "source": "blue_reverie"
+    },
+    {
+        "id": "yssarilagent_br",
+        "faction": "yssaril",
+        "type": "agent",
+        "name": "Ssruu",
+        "tfName": "Clever Genome",
+        "title": "Clever, Clever Ssruu",
+        "abilityWindow": "At any time:",
+        "abilityText": "This card has the text ability of each other player's agent that is exhausted. ",
+        "unlockCondition": "Always Unlocked",
+        "homebrewReplacesID": "yssarilagent",
         "source": "blue_reverie"
     }
 ]

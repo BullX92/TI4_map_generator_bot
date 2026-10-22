@@ -1,9 +1,9 @@
 package ti4.message;
 
-import static ti4.helpers.discord.DiscordErrorUtility.isDiscordServerError;
-import static ti4.helpers.discord.DiscordErrorUtility.isIgnorableError;
-import static ti4.helpers.discord.DiscordErrorUtility.isUnknownEmojiError;
-import static ti4.helpers.discord.DiscordErrorUtility.isUnknownMessageError;
+import static ti4.discord.utility.DiscordErrorUtility.isDiscordServerError;
+import static ti4.discord.utility.DiscordErrorUtility.isIgnorableError;
+import static ti4.discord.utility.DiscordErrorUtility.isUnknownEmojiError;
+import static ti4.discord.utility.DiscordErrorUtility.isUnknownMessageError;
 
 import java.io.File;
 import java.net.SocketTimeoutException;
@@ -19,9 +19,13 @@ import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import lombok.experimental.UtilityClass;
+import net.dv8tion.jda.api.components.Component;
 import net.dv8tion.jda.api.components.actionrow.ActionRow;
 import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.components.buttons.ButtonStyle;
+import net.dv8tion.jda.api.components.selections.SelectMenu;
+import net.dv8tion.jda.api.components.selections.SelectOption;
+import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.User;
@@ -49,14 +53,15 @@ import org.apache.commons.lang3.function.Consumers;
 import org.jetbrains.annotations.NotNull;
 import ti4.discord.JdaService;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.utility.DiscordThreadUtility;
 import ti4.executors.CircuitBreaker;
 import ti4.game.Game;
 import ti4.game.Player;
 import ti4.game.persistence.GameManager;
 import ti4.game.persistence.ManagedGame;
-import ti4.helpers.AliasHandler;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.Helper;
+import ti4.helpers.StringHelper;
 import ti4.logging.BotLogger;
 import ti4.logging.LogOrigin;
 import ti4.service.actioncard.SabotageService;
@@ -66,9 +71,13 @@ import ti4.service.button.ReactionService;
 import ti4.service.emoji.ApplicationEmojiService;
 import ti4.service.game.GameNameService;
 import ti4.service.game.GameUndoNameService;
+import ti4.service.testbed.TestBedService;
 
 @UtilityClass
 public class MessageHelper {
+
+    private static final int SECONDS_PER_RATE_LIMITED_CHANNEL_MESSAGE = 2;
+    static final int MAX_MESSAGES_PER_SEND = 20;
 
     public static Consumer<Message> pin() {
         return msg -> msg.pin().queue(Consumers.nop(), error -> {
@@ -179,6 +188,15 @@ public class MessageHelper {
         splitAndSent(messageText, channel, embeds, buttons);
     }
 
+    public static void sendMessageToChannelWithEmbedsAndButtons(
+            @Nonnull MessageChannel channel,
+            @Nullable String messageText,
+            @Nullable List<MessageEmbed> embeds,
+            @Nullable List<Button> buttons,
+            @Nullable Consumer<Message> restAction) {
+        splitAndSentWithAction(messageText, channel, restAction, embeds, buttons);
+    }
+
     public static List<Button> addUndoButtonToList(List<Button> buttons, String gameName) {
         for (Button button : buttons) {
             if (button.getCustomId() != null
@@ -247,7 +265,23 @@ public class MessageHelper {
             List<MessageEmbed> embeds,
             List<Button> buttons,
             boolean saboable) {
+        sendMessageToChannelWithEmbedsAndFactionReact(
+                channel, messageText, game, player, embeds, buttons, saboable, null);
+    }
+
+    public static void sendMessageToChannelWithEmbedsAndFactionReact(
+            MessageChannel channel,
+            String messageText,
+            Game game,
+            Player player,
+            List<MessageEmbed> embeds,
+            List<Button> buttons,
+            boolean saboable,
+            @Nullable Consumer<Message> andThen) {
         Consumer<Message> addFactionReact = (message) -> {
+            if (andThen != null) {
+                andThen.accept(message);
+            }
             if (saboable) {
                 GameMessageManager.add(
                         game.getName(),
@@ -480,6 +514,66 @@ public class MessageHelper {
                 .queue(Consumers.nop(), BotLogger::catchRestError);
     }
 
+    /** How many buttons fit on a single message: max action rows x max buttons per row. */
+    private static int maxButtonsInOneMessage() {
+        return Message.MAX_COMPONENT_COUNT * ActionRow.getMaxAllowed(Component.Type.BUTTON);
+    }
+
+    /**
+     * Posts a button list, or rewrites the message the clicked button lives on. Use this for any refreshable
+     * list of buttons: send fresh when opening it (the click came from a different message), edit in place on
+     * every subsequent refresh, so repeatedly toggling something doesn't leave a trail of stale copies.
+     *
+     * <p>Not to be confused with {@code NewStuffHelper.sendOrEditButtons}, which decides implicitly (it edits
+     * only when the new text is byte-identical to the old), replaces components without rewriting the text,
+     * and keeps only the first action row. This one takes an explicit flag and does rewrite the text.
+     *
+     * <p>Editing can't span messages, so a list too large for one message falls back to a fresh send (which
+     * paginates) rather than silently losing the overflow.
+     */
+    public static void postOrEditWithButtons(
+            ButtonInteractionEvent event, String message, List<Button> buttons, boolean editInPlace) {
+        if (editInPlace && buttons.size() <= maxButtonsInOneMessage()) {
+            editMessageWithButtons(event, message, buttons);
+        } else {
+            sendMessageToChannelWithButtons(event.getMessageChannel(), message, buttons);
+        }
+    }
+
+    /**
+     * Posts {@code options} as one or more string-select menus, splitting on Discord's per-menu option cap.
+     * Callers build the {@link SelectOption}s themselves - those already carry label, value, emoji and
+     * description, so no mapper callbacks are needed here.
+     *
+     * <p>Every page reuses {@code menuId}: Discord only requires component ids to be unique within a single
+     * message, and the handler registry prefix-matches, so all pages route to the same handler.
+     *
+     * <p>When the options span multiple pages each prompt gains an "(A - M)" style suffix so the pages can be
+     * told apart; a single page is left unsuffixed.
+     */
+    public static void sendPagedSelectMenus(
+            MessageChannel channel, String menuId, List<SelectOption> options, String prompt) {
+        if (channel == null || options.isEmpty()) return;
+        List<List<SelectOption>> pages = ListUtils.partition(options, SelectMenu.OPTIONS_MAX_AMOUNT);
+        for (List<SelectOption> page : pages) {
+            StringSelectMenu menu = StringSelectMenu.create(menuId)
+                    .addOptions(page)
+                    .setRequiredRange(1, 1)
+                    .build();
+            String pagePrompt = prompt + (pages.size() > 1 ? pageRangeLabel(page) : "");
+            channel.sendMessage(pagePrompt)
+                    .addComponents(ActionRow.of(menu))
+                    .queue(Consumers.nop(), BotLogger::catchRestError);
+        }
+    }
+
+    /** " (A - M)" style suffix describing the range of labels on one select-menu page. */
+    private static String pageRangeLabel(List<SelectOption> page) {
+        String first = page.getFirst().getLabel();
+        String last = page.getLast().getLabel();
+        return first.equals(last) ? " (" + first + ")" : " (" + first + " - " + last + ")";
+    }
+
     private static void replyToMessage(
             GenericInteractionCreateEvent event,
             FileUpload fileUpload,
@@ -627,44 +721,37 @@ public class MessageHelper {
         buttons = sanitizeButtons(buttons, channel);
 
         String gameName = GameNameService.getGameNameFromChannel(channel);
-        ManagedGame managedGame = GameManager.getManagedGame(gameName);
-        if (managedGame != null && !managedGame.isInjectRules()) {
-            messageText = injectRules(messageText);
+        if (shouldInjectRules(GameManager.getManagedGame(gameName))) {
+            messageText = RulesLinkInjector.inject(messageText);
         }
 
         String finalMessageText = messageText;
         List<MessageCreateData> objects = getMessageCreateDataObjects(finalMessageText, sanitizedEmbeds, buttons);
-        Iterator<MessageCreateData> iterator = objects.iterator();
-        while (iterator.hasNext()) {
-            MessageCreateData messageCreateData = iterator.next();
-            if (iterator.hasNext()) { // not last message
-                sendMessageWithRetry(channel, messageCreateData, null, "Failed to send intermediate message", 1);
-            } else { // last message, do action
-                sendMessageWithRetry(
-                        channel,
-                        messageCreateData,
-                        message -> {
-                            updateManagedMessages(finalMessageText, message, gameName);
-                            if (restAction != null) {
-                                restAction.accept(message);
-                            }
-                        },
-                        finalMessageText,
-                        1);
-            }
-        }
+        sendMessagesWithRetry(
+                channel,
+                objects,
+                message -> {
+                    updateManagedMessages(finalMessageText, message, gameName);
+                    if (restAction != null) {
+                        restAction.accept(message);
+                    }
+                },
+                finalMessageText,
+                1);
     }
 
     private static void updateManagedMessages(String text, Message message, String gameName) {
         ManagedGame managedGame = GameManager.getManagedGame(gameName);
-        if (text == null || message == null || managedGame == null || managedGame.isFowMode()) return;
+        if (text == null || message == null || managedGame == null) return;
+        if (managedGame.isFowMode()) {
+            replaceFogTurnMessage(text, message, managedGame);
+            return;
+        }
 
         String id = message.getId();
         long date = managedGame.getLastModifiedDate();
 
-        if (text.contains("Use buttons to do your turn")
-                || text.contains("Use buttons to end turn")
-                || text.contains("Use the buttons to end turn")) {
+        if (isTurnButtonMessage(text)) {
             String old = GameMessageManager.replace(gameName, new GameMessage(id, GameMessageType.TURN, date));
             if (old != null) {
                 message.getChannel().deleteMessageById(old).queue(Consumers.nop(), BotLogger::catchRestError);
@@ -676,22 +763,71 @@ public class MessageHelper {
         }
     }
 
+    private static boolean isTurnButtonMessage(String text) {
+        return text.contains("Use buttons to do your turn")
+                || text.contains("Use buttons to end turn")
+                || text.contains("Use the buttons to end turn");
+    }
+
+    private static void replaceFogTurnMessage(String text, Message message, ManagedGame managedGame) {
+        if (!isTurnButtonMessage(text) || !managedGame.isFogQol01()) return;
+        MessageChannel channel = message.getChannel();
+        GameMessage turnMessage = new GameMessage(
+                message.getId(), GameMessageType.TURN, managedGame.getLastModifiedDate(), channel.getId());
+        String old = GameMessageManager.replace(managedGame.getName(), turnMessage);
+        if (old != null) {
+            channel.deleteMessageById(old).queue(Consumers.nop(), BotLogger::catchRestError);
+        }
+    }
+
     public static void sendMessagesWithRetry(
             MessageChannel channel,
             List<MessageCreateData> messageCreateDataList,
             Consumer<Message> successAction,
             String errorHeader,
             int remainingAttempts) {
-        Iterator<MessageCreateData> iterator = messageCreateDataList.iterator();
-        while (iterator.hasNext()) {
-            MessageCreateData messageCreateData = iterator.next();
-            if (iterator.hasNext()) { // not last message
+        if (messageCreateDataList.size() > MAX_MESSAGES_PER_SEND) {
+            BotLogger.warning(channel.getAsMention() + " Output of "
+                    + StringHelper.pluralize(messageCreateDataList.size(), "message") + " was capped at "
+                    + MAX_MESSAGES_PER_SEND + ".");
+        }
+        List<MessageCreateData> cappedMessages = capMessageCount(messageCreateDataList);
+        int lastPosition = cappedMessages.size() - 1;
+        for (int queuePosition = 0; queuePosition <= lastPosition; queuePosition++) {
+            MessageCreateData messageCreateData = cappedMessages.get(queuePosition);
+            if (queuePosition < lastPosition) {
                 sendMessageWithRetry(
-                        channel, messageCreateData, null, "Failed to send intermediate message", remainingAttempts);
-            } else { // last message, do action
-                sendMessageWithRetry(channel, messageCreateData, successAction, errorHeader, remainingAttempts);
+                        channel,
+                        messageCreateData,
+                        null,
+                        "Failed to send intermediate message",
+                        remainingAttempts,
+                        queuePosition);
+            } else {
+                sendMessageWithRetry(
+                        channel, messageCreateData, successAction, errorHeader, remainingAttempts, queuePosition);
             }
         }
+    }
+
+    static List<MessageCreateData> capMessageCount(List<MessageCreateData> messages) {
+        if (messages.size() <= MAX_MESSAGES_PER_SEND) {
+            return messages;
+        }
+        int keptLeadingMessages = MAX_MESSAGES_PER_SEND - 2;
+        int omittedMessages = messages.size() - keptLeadingMessages - 1;
+        List<MessageCreateData> capped = new ArrayList<>(messages.subList(0, keptLeadingMessages));
+        capped.add(new MessageCreateBuilder()
+                .addContent("-# Output truncated: " + StringHelper.pluralize(omittedMessages, "message")
+                        + " omitted to avoid flooding the channel.")
+                .build());
+        capped.add(messages.getLast());
+        return capped;
+    }
+
+    private static long sendTimeoutSecondsForQueuePosition(int queuePosition) {
+        return JdaService.DISCORD_REQUEST_TIMEOUT_SECONDS
+                + (long) queuePosition * SECONDS_PER_RATE_LIMITED_CHANNEL_MESSAGE;
     }
 
     private static void sendMessageWithRetry(
@@ -699,8 +835,10 @@ public class MessageHelper {
             MessageCreateData messageCreateData,
             Consumer<Message> successAction,
             String errorHeader,
-            int remainingAttempts) {
+            int remainingAttempts,
+            int queuePosition) {
         channel.sendMessage(messageCreateData)
+                .timeout(sendTimeoutSecondsForQueuePosition(queuePosition), TimeUnit.SECONDS)
                 .queue(
                         message -> {
                             if (successAction != null) {
@@ -724,7 +862,12 @@ public class MessageHelper {
                                                 channel, errorHeader + " (retrying)", messageCreateData, error),
                                         error);
                                 sendMessageWithRetry(
-                                        channel, messageCreateData, successAction, errorHeader, remainingAttempts - 1);
+                                        channel,
+                                        messageCreateData,
+                                        successAction,
+                                        errorHeader,
+                                        remainingAttempts - 1,
+                                        queuePosition);
                             } else {
                                 BotLogger.error(
                                         getRestActionFailureMessage(channel, errorHeader, messageCreateData, error),
@@ -740,17 +883,7 @@ public class MessageHelper {
         sb.append(errorHeader);
         sb.append("\n```").append(error.getMessage()).append("```");
         if (messageCreateData != null && !isDiscordServerError(error)) {
-            String messageJSON = messageCreateData.toData().toPrettyString();
             sb.append("\nMessageContent: ").append(messageCreateData.getContent());
-            int maxJSONLength = 1500;
-            if (messageJSON.length() < maxJSONLength) {
-                sb.append("\nJSON:\n```json").append(messageJSON).append("```");
-            } else {
-                sb.append("\nJSON:\n```json")
-                        .append(StringUtils.left(messageJSON, maxJSONLength))
-                        .append("```");
-                sb.append("\nMessageData JSON was too long and was truncated");
-            }
         }
         return sb.toString();
     }
@@ -792,13 +925,17 @@ public class MessageHelper {
             String successText) {
         if (messageText == null || messageText.isEmpty()) return true; // blank message counts as a success
         User user = player == null ? null : JdaService.jda.getUserById(player.getUserID());
-        if (user == null) {
+        if (player == null || (user == null && !TestBedService.isVirtualSeatInTestBed(game, player))) {
             sendMessageToChannel(feedbackChannel, failText);
             return false;
         } else {
             MessageChannel privateChannel = player.getPrivateChannel();
             if (!game.isFowMode()) {
                 privateChannel = player.getCardsInfoThread();
+            }
+            if (privateChannel == null && user == null) {
+                sendMessageToChannel(feedbackChannel, failText);
+                return false;
             }
             if (privateChannel == null) {
                 sendMessageToUser(game.getName() + " " + messageText, user, feedbackChannel, failText);
@@ -929,6 +1066,43 @@ public class MessageHelper {
             }
         }
         return texts;
+    }
+
+    /**
+     * Packs blocks into as few messages as possible without ever splitting one across two of them.
+     * A block is whatever the caller does not want broken up - a heading with its notes, or a list
+     * item with the bullets nested under it, which Discord renders as a list of their own if they
+     * arrive in a message without the line they hang off.
+     * <p>
+     * A block longer than maxLength on its own cannot be kept whole, and is split by
+     * {@link #splitLargeText(String, int)} as a last resort.
+     *
+     * @param blocks text blocks to pack, in the order they should appear
+     * @param maxLength maximum length of each returned message, any positive integer
+     */
+    public static List<String> packBlocksIntoMessages(List<String> blocks, int maxLength) {
+        List<String> messages = new ArrayList<>();
+        if (blocks == null || blocks.isEmpty()) return messages;
+        StringBuilder message = new StringBuilder();
+        for (String block : blocks) {
+            if (block == null || block.isEmpty()) continue;
+            if (message.length() + block.length() > maxLength && !message.isEmpty()) {
+                messages.add(message.toString());
+                message.setLength(0);
+            }
+            if (block.length() > maxLength) {
+                // splitLargeText can trail an empty part, and Discord rejects an empty message.
+                for (String part : splitLargeText(block, maxLength)) {
+                    if (!part.isEmpty()) messages.add(part);
+                }
+                continue;
+            }
+            message.append(block);
+        }
+        if (!message.isEmpty()) {
+            messages.add(message.toString());
+        }
+        return messages;
     }
 
     /**
@@ -1111,11 +1285,42 @@ public class MessageHelper {
                 || messageToSend.isEmpty()) return;
         if (channel instanceof TextChannel) {
             channel.asTextChannel()
-                    .createThreadChannel(threadName)
+                    .createThreadChannel(DiscordThreadUtility.fitThreadName(threadName))
                     .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
                     .queueAfter(500, TimeUnit.MILLISECONDS, t -> sendMessageToChannel(t, messageToSend));
         } else if (channel instanceof ThreadChannel) {
             sendMessageToChannel(channel, messageToSend);
+        }
+    }
+
+    /**
+     * Sends blocks to a thread, packed into as few messages as possible without splitting a block
+     * across two of them. Use this over the String overload whenever the text has units - such as
+     * a bullet and the bullets nested under it - that have to arrive in the same message.
+     */
+    public static void sendMessageToThread(MessageChannelUnion channel, String threadName, List<String> blocks) {
+        if (channel == null || threadName == null || threadName.isEmpty()) return;
+        List<String> messages = packBlocksIntoMessages(blocks, 2000);
+        if (messages.isEmpty()) return;
+        if (channel instanceof TextChannel) {
+            channel.asTextChannel()
+                    .createThreadChannel(DiscordThreadUtility.fitThreadName(threadName))
+                    .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
+                    .queueAfter(
+                            500,
+                            TimeUnit.MILLISECONDS,
+                            t -> messages.forEach(message -> sendMessageToChannel(t, message)));
+        } else if (channel instanceof ThreadChannel) {
+            messages.forEach(message -> sendMessageToChannel(channel, message));
+        }
+    }
+
+    public static void sendMessageToThread(MessageChannel channel, String threadName, List<String> blocks) {
+        if (channel instanceof MessageChannelUnion union) {
+            sendMessageToThread(union, threadName, blocks);
+        } else {
+            sendMessageToChannel(channel, "Something went wrong trying to send this to a thread! Sorry!");
+            packBlocksIntoMessages(blocks, 2000).forEach(message -> sendMessageToChannel(channel, message));
         }
     }
 
@@ -1126,7 +1331,7 @@ public class MessageHelper {
         }
         if (channel instanceof TextChannel) {
             channel.asTextChannel()
-                    .createThreadChannel(threadName)
+                    .createThreadChannel(DiscordThreadUtility.fitThreadName(threadName))
                     .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
                     .queueAfter(
                             500,
@@ -1138,7 +1343,7 @@ public class MessageHelper {
                                     error));
         } else if (channel instanceof ThreadChannel thread) {
             if (embeds.size() > 8 && thread.getParentChannel() instanceof TextChannel chan) {
-                chan.createThreadChannel(threadName)
+                chan.createThreadChannel(DiscordThreadUtility.fitThreadName(threadName))
                         .setAutoArchiveDuration(AutoArchiveDuration.TIME_1_HOUR)
                         .queueAfter(
                                 500,
@@ -1225,30 +1430,7 @@ public class MessageHelper {
         return newButtons;
     }
 
-    private static String injectRules(String message) {
-        if (message == null) {
-            return null;
-        }
-        try {
-            StringBuilder edited = new StringBuilder(message);
-            StringBuilder copy = new StringBuilder(message.toLowerCase());
-            for (String keyWord : AliasHandler.getInjectedRules()) {
-                if ("bombardment".equals(keyWord) && message.contains("Tactical Bombardment")) continue;
-                if ("production".equals(keyWord) && message.contains("Monopolize Production")) continue;
-                if (copy.indexOf(keyWord) > -1) {
-                    String replace = "](https://www.tirules.com/" + AliasHandler.getInjectedRule(keyWord) + ")";
-                    int firstIndex = copy.indexOf(keyWord);
-                    int lastIndex = firstIndex + keyWord.length() + 1;
-                    copy.insert(firstIndex, "[");
-                    copy.insert(lastIndex, replace);
-                    edited.insert(firstIndex, "[");
-                    edited.insert(lastIndex, replace);
-                }
-            }
-            return edited.toString();
-        } catch (Exception e) {
-            BotLogger.error("Issue injecting Rules into message: " + message, e);
-            return message;
-        }
+    static boolean shouldInjectRules(ManagedGame managedGame) {
+        return managedGame != null && managedGame.isInjectRules() && !managedGame.isFowMode();
     }
 }
