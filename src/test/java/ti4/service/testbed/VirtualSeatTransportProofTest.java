@@ -38,6 +38,54 @@ import ti4.testUtils.BaseTi4Test;
 
 class VirtualSeatTransportProofTest extends BaseTi4Test {
     @Test
+    void virtualSeatStagesCarrierAndInfantryThroughOriginalMovementHandlers() {
+        try (Fixture f = new Fixture()) {
+            f.game.setPhaseOfGame("action");
+            f.game.setActivePlayerID(f.a.getUserID());
+            f.game.setActiveSystem("201");
+            Tile home = new Tile("01", "301");
+            Tile target = new Tile("19", "201");
+            f.game.setTile(home);
+            f.game.setTile(target);
+            f.a.getPlanets().add("jord");
+            var carrier = ti4.helpers.Units.getUnitKey(ti4.helpers.Units.UnitType.Carrier, "blue");
+            var infantry = ti4.helpers.Units.getUnitKey(ti4.helpers.Units.UnitType.Infantry, "blue");
+            home.getSpaceUnitHolder().addUnit(carrier, 1);
+            home.getUnitHolders().get("jord").addUnit(infantry, 2);
+            Button moveCarrier = ti4.helpers.ButtonHelper.buildMoveUnitButton(
+                    f.a, home, home.getSpaceUnitHolder(), ti4.helpers.Units.UnitState.none, carrier, 1, false, false);
+            assertEquals("FFCC_sol_unitTacticalMove_301_1_cv_blue", moveCarrier.getCustomId());
+            assertEquals(InteractionProcessingResult.COMPLETED, f.press(f.a, moveCarrier));
+            assertEquals(0, home.getSpaceUnitHolder().getUnitCount(carrier));
+            Button moveInfantry = ti4.helpers.ButtonHelper.buildMoveUnitButton(
+                    f.a,
+                    home,
+                    home.getUnitHolders().get("jord"),
+                    ti4.helpers.Units.UnitState.none,
+                    infantry,
+                    1,
+                    false,
+                    false);
+            assertEquals("FFCC_sol_unitTacticalMove_301_1_gf_jord_blue", moveInfantry.getCustomId());
+            assertEquals(InteractionProcessingResult.COMPLETED, f.press(f.a, moveInfantry));
+            assertEquals(1, home.getUnitHolders().get("jord").getUnitCount(infantry));
+            assertEquals(
+                    1,
+                    f.game.getTacticalActionDisplacement()
+                            .get("301-space")
+                            .get(carrier)
+                            .getFirst());
+            assertEquals(
+                    1,
+                    f.game.getTacticalActionDisplacement()
+                            .get("301-jord")
+                            .get(infantry)
+                            .getFirst());
+            assertTrue(f.human.getPlanets().isEmpty());
+        }
+    }
+
+    @Test
     void managedAgentUsesOriginalStrategyHandlerWithoutPersistentHumanImpersonation() {
         try (Fixture f = new Fixture()) {
             List<Player> agents = new java.util.ArrayList<>(List.of(f.a, f.b));
@@ -45,6 +93,13 @@ class VirtualSeatTransportProofTest extends BaseTi4Test {
                 agents.add(f.game.addPlayer(TestBedService.VIRTUAL_SEAT_ID_PREFIX + "0" + index, "Agent " + index));
             }
             ManagedSeats.register(f.game, "123", agents);
+            Game independentlyLoadedGame = new Game();
+            independentlyLoadedGame.setName(f.game.getName());
+            independentlyLoadedGame.addPlayer("123", "Human").setFaction("hacan");
+            independentlyLoadedGame.addPlayer(f.a.getUserID(), "Virtual A").setFaction("sol");
+            ManagedGame managed = mock(ManagedGame.class);
+            when(managed.getGame()).thenReturn(independentlyLoadedGame);
+            f.games.when(() -> GameManager.getManagedGame(f.game.getName())).thenReturn(managed);
             Button button = Helper.getRemainingSCButtons(f.game, f.a).stream()
                     .filter(candidate -> "FFCC_sol_scPick_1".equals(candidate.getCustomId()))
                     .findFirst()
@@ -58,6 +113,9 @@ class VirtualSeatTransportProofTest extends BaseTi4Test {
             assertEquals(java.util.Set.of(1), f.a.getSCs());
             assertTrue(f.b.getSCs().isEmpty());
             assertTrue(f.human.getSCs().isEmpty());
+            assertTrue(
+                    independentlyLoadedGame.getPlayer(f.a.getUserID()).getSCs().isEmpty());
+            f.games.verify(() -> GameManager.save(eq(f.game), anyString()), atLeastOnce());
             assertSame(f.human, ManagedSeats.resolve(f.game, "123", f.human));
             assertNull(TestBedService.getActingAs(f.game, "123"));
         }
@@ -242,6 +300,9 @@ class VirtualSeatTransportProofTest extends BaseTi4Test {
             when(message.getGuild()).thenReturn(guild);
             when(message.getId()).thenReturn("789");
             when(message.getComponentTree()).thenReturn(MessageComponentTree.of());
+            MessageEditAction edit = mock(MessageEditAction.class, RETURNS_SELF);
+            when(edit.submit()).thenReturn(CompletableFuture.completedFuture(message));
+            when(message.editMessage(any(CharSequence.class))).thenReturn(edit);
             when(message.reply(any(CharSequence.class))).thenReturn(mock(MessageCreateAction.class, RETURNS_SELF));
             AuditableRestAction<Void> deletion = mock(AuditableRestAction.class);
             when(deletion.submit()).thenReturn(CompletableFuture.completedFuture(null));

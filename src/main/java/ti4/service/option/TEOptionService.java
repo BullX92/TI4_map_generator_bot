@@ -15,6 +15,7 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.commands.franken.ban.BanService;
+import ti4.discord.interactions.commands.game.WeirdGameSetup;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.draft.TwilightsFallFrankenDraft;
 import ti4.game.Game;
@@ -313,6 +314,17 @@ public class TEOptionService {
     @ButtonHandler("chooseExp_")
     public static void chooseExp(ButtonInteractionEvent event, Game game, String buttonID) {
         String choice = buttonID.split("_")[1];
+        if (!List.of("newpok", "oldpok", "te").contains(choice.toLowerCase())) return;
+        boolean restoringPokComponents = game.isBaseGameMode();
+        if (restoringPokComponents) {
+            if (game.getPlayers().values().stream().anyMatch(player -> Mapper.isValidFaction(player.getFaction()))) {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(),
+                        "Cannot switch from base game after faction setup. Finish the chosen setup or restart setup first.");
+                return;
+            }
+            if (!WeirdGameSetup.applyPokMode(event, game)) return;
+        }
         switch (choice.toLowerCase()) {
             case "newpok" -> {
                 game.removeStoredValue("useOldPok");
@@ -324,7 +336,8 @@ public class TEOptionService {
                 game.setThundersEdge(false);
             }
             case "te" -> {
-                game.setThundersEdge(true);
+                if (restoringPokComponents) WeirdGameSetup.applyThundersEdgeMode(event, game, true);
+                else game.setThundersEdge(true);
                 game.removeStoredValue("useOldPok");
             }
         }

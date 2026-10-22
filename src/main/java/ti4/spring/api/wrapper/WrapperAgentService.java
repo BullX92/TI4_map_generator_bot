@@ -5,11 +5,13 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import ti4.discord.JdaService;
@@ -20,6 +22,7 @@ import ti4.executors.ExecutionLockType;
 import ti4.game.Game;
 import ti4.game.Player;
 import ti4.game.persistence.GameManager;
+import ti4.helpers.Units.UnitType;
 import ti4.service.testbed.ManagedSeats;
 import ti4.service.testbed.TestBedPress;
 import ti4.service.testbed.TestBedService;
@@ -72,6 +75,44 @@ public class WrapperAgentService {
     private final ActiveLeaseService lease;
     private final WrapperMessageIndex messages;
 
+    @Scheduled(fixedDelay = 5000, initialDelay = 15_000)
+    public void tick() {
+        if (!lease.mayMutate() || !lease.isReady() || lease.isDraining()) return;
+        for (var managed : GameManager.getManagedGames()) {
+            if (managed.isHasEnded()) continue;
+            Game game = managed.getGame();
+            if (game == null || !"true".equals(game.getStoredValue("wrapperAgentsRunning"))) continue;
+            try {
+                step(game.getName(), ManagedSeats.owner(game), "auto-" + UUID.randomUUID());
+            } catch (RuntimeException failure) {
+                ExecutionLockManager.lock(game.getName(), ExecutionLockType.WRITE);
+                try {
+                    Game latest = managed.getGame();
+                    latest.removeStoredValue("wrapperAgentsRunning");
+                    GameManager.save(latest, "Agent automatic run paused after failure");
+                } finally {
+                    ExecutionLockManager.unlock(game.getName(), ExecutionLockType.WRITE);
+                }
+            }
+        }
+    }
+
+    public View running(String gameName, String actor, boolean enabled) {
+        if (!lease.mayMutate() || !lease.isReady() || lease.isDraining())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Active ready server required");
+        ExecutionLockManager.lock(gameName, ExecutionLockType.WRITE);
+        try {
+            Game game = authorized(gameName, actor);
+            if (enabled && !game.getStoredValue(ACTIVE_REQUEST).isEmpty())
+                return view(game, "UNCERTAIN", "Letzten Schritt zuerst prüfen.");
+            game.setStoredValue("wrapperAgentsRunning", Boolean.toString(enabled));
+            GameManager.save(game, enabled ? "Automatic agents enabled" : "Automatic agents paused");
+            return view(game, enabled ? "RUNNING" : "PAUSED", enabled ? "Bots spielen automatisch." : "Bots pausiert.");
+        } finally {
+            ExecutionLockManager.unlock(gameName, ExecutionLockType.WRITE);
+        }
+    }
+
     public WrapperAgentService(ActiveLeaseService lease, WrapperMessageIndex messages) {
         this.lease = lease;
         this.messages = messages;
@@ -82,7 +123,10 @@ public class WrapperAgentService {
         try {
             Game game = authorized(gameName, actor);
             return game.getStoredValue(ACTIVE_REQUEST).isEmpty()
-                    ? view(game, "PAUSED", "Agentensteuerung im Einzelschritt.")
+                    ? view(
+                            game,
+                            "true".equals(game.getStoredValue("wrapperAgentsRunning")) ? "RUNNING" : "PAUSED",
+                            "Einfache Botexpansion über Originalhandler.")
                     : view(
                             game,
                             "UNCERTAIN",
@@ -134,6 +178,22 @@ public class WrapperAgentService {
             int beforeDraft = game.getMiltyDraftManager().getDraftIndex();
             int beforeSecrets = decision.player().getSo();
             int beforeCards = decision.player().getSCs().size();
+            var plan = "Taktischer Schritt".equals(decision.kind())
+                    ? WrapperTacticalPolicy.current(game, decision.player())
+                    : null;
+            if (plan != null) game.setStoredValue(WrapperTacticalPolicy.PLAN, plan.encode());
+            int beforeTokens = decision.player().getTacticalCC();
+            int beforeCarriers = plan == null
+                    ? 0
+                    : game.getTileByPosition(plan.origin())
+                            .getSpaceUnitHolder()
+                            .getUnitCount(UnitType.Carrier, decision.player());
+            int beforeInfantry = plan == null
+                    ? 0
+                    : game.getTileByPosition(plan.origin())
+                            .getUnitHolders()
+                            .get(plan.sourcePlanet())
+                            .getUnitCount(UnitType.Infantry, decision.player());
             try {
                 TestBedPress.PressResult result;
                 try {
@@ -153,9 +213,19 @@ public class WrapperAgentService {
                                 decision.player().getSo() == beforeSecrets - 1;
                             case "Strategiekarte gewählt" ->
                                 decision.player().getSCs().size() == beforeCards + 1;
+                            case "Taktischer Schritt" ->
+                                WrapperTacticalPolicy.changed(
+                                        game, decision.player(), plan, beforeTokens, beforeCarriers, beforeInfantry);
                             default -> false;
                         };
                 String status = result.outcome() == TestBedPress.Outcome.PRESSED && changed ? "COMPLETED" : "UNCERTAIN";
+                if ("COMPLETED".equals(status) && plan != null) {
+                    if (plan.stage() == 11) game.removeStoredValue(WrapperTacticalPolicy.PLAN);
+                    else
+                        game.setStoredValue(
+                                WrapperTacticalPolicy.PLAN, plan.next().encode());
+                }
+                if ("UNCERTAIN".equals(status)) game.removeStoredValue("wrapperAgentsRunning");
                 game.setStoredValue(REQUEST_PREFIX + requestId, status);
                 if ("COMPLETED".equals(status)) game.removeStoredValue(ACTIVE_REQUEST);
                 GameManager.save(game, "Agent step " + status);
@@ -167,6 +237,7 @@ public class WrapperAgentService {
                                         ? " abgeschlossen."
                                         : " angehalten; Originalzustand prüfen."));
             } catch (RuntimeException failure) {
+                game.removeStoredValue("wrapperAgentsRunning");
                 game.setStoredValue(ACTIVE_REQUEST, requestId);
                 game.setStoredValue(REQUEST_PREFIX + requestId, "UNCERTAIN");
                 GameManager.save(game, "Agent step uncertain; no automatic retry");
@@ -221,6 +292,10 @@ public class WrapperAgentService {
                     .sorted()
                     .toList();
             return offered(game, active, choices, "Strategiekarte gewählt");
+        }
+        if ("action".equals(game.getPhaseOfGame()) && ManagedSeats.isAgent(game, active)) {
+            var plan = WrapperTacticalPolicy.current(game, active);
+            if (plan != null) return offered(game, active, plan.buttons(active), "Taktischer Schritt");
         }
         return null;
     }
@@ -302,7 +377,7 @@ public class WrapperAgentService {
                 game.getName(),
                 game.getPhaseOfGame(),
                 game.getRound(),
-                true,
+                !"true".equals(game.getStoredValue("wrapperAgentsRunning")),
                 game.getPlayers().values().stream()
                         .map(p -> new Seat(
                                 p.getUserID(), p.getUserName(), displayFaction(p), !ManagedSeats.isAgent(game, p)))
@@ -319,7 +394,7 @@ public class WrapperAgentService {
                 && game.getRealPlayers().size() == 6
                 && game.getRealPlayers().stream()
                         .allMatch(p -> p.getSo() == 1 && p.getSCs().size() == 1))
-            return "Spielstart erreicht. Weitere Botentscheidungen sind noch nicht automatisiert.";
+            return "Spielstart erreicht. Bots expandieren mit Träger und Infanterie in unbesetzte Nachbarsysteme; dein Sitz wartet auf dich.";
         for (Player agent : ManagedSeats.agents(game)) {
             if (displayFaction(agent) != null && !SUPPORTED_FACTIONS.contains(agent.getFaction()))
                 return agent.getUserName() + ": Fraktionsaufbau für " + agent.getFaction()

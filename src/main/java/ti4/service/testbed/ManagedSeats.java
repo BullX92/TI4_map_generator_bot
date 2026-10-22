@@ -66,6 +66,15 @@ public final class ManagedSeats {
         return context != null && context.game() == game && context.actor().equals(actor) ? context.seat() : ownSeat;
     }
 
+    public static Game gameForInteraction(String gameName, String actor) {
+        Context context = CURRENT.get();
+        return context != null
+                        && context.game().getName().equals(gameName)
+                        && context.actor().equals(actor)
+                ? context.game()
+                : null;
+    }
+
     public static <T> T asAgent(Game game, Member actor, Player seat, Supplier<T> action) {
         if (!canUseHumanBridge(game)
                 || actor == null

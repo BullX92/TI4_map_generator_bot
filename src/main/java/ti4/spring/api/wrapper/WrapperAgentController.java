@@ -14,6 +14,8 @@ import ti4.spring.context.SetupRequestContext;
 public class WrapperAgentController {
     public record StepRequest(String requestId) {}
 
+    public record RunRequest(boolean enabled) {}
+
     private final WrapperAgentService agents;
 
     public WrapperAgentController(WrapperAgentService agents) {
@@ -30,5 +32,11 @@ public class WrapperAgentController {
     @SetupRequestContext(false)
     public WrapperAgentService.View step(@PathVariable String gameName, @RequestBody StepRequest request) {
         return agents.step(gameName, RequestContext.getUserId(), request.requestId());
+    }
+
+    @PostMapping("/api/wrapper/games/{gameName}/agents/run")
+    @SetupRequestContext(false)
+    public WrapperAgentService.View run(@PathVariable String gameName, @RequestBody RunRequest request) {
+        return agents.running(gameName, RequestContext.getUserId(), request.enabled());
     }
 }

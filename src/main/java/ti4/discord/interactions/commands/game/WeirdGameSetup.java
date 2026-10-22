@@ -506,6 +506,12 @@ public class WeirdGameSetup extends GameStateSubcommand {
         return true;
     }
 
+    public static boolean applyPokMode(GenericInteractionCreateEvent event, Game game) {
+        game.setThundersEdge(false);
+        game.setTwilightsFallMode(false);
+        return setGameMode(event, game, false, false, false, false, false, false, false);
+    }
+
     public static boolean applyBaseGameMode(GenericInteractionCreateEvent event, Game game) {
         game.setThundersEdge(false);
         game.setTwilightsFallMode(false);

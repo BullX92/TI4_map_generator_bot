@@ -26,6 +26,7 @@ import ti4.message.MessageHelper;
 import ti4.model.metadata.AutoPingMetadataManager;
 import ti4.service.event.EventAuditService;
 import ti4.service.game.GameNameService;
+import ti4.service.testbed.ManagedSeats;
 import ti4.service.testbed.TestBedService;
 import ti4.settings.users.UserSettingsManager;
 
@@ -77,9 +78,13 @@ public abstract class ListenerContext {
         envelope = ComponentIdEnvelope.decode(compID);
 
         String gameName = GameNameService.getGameNameFromChannel(event);
-        game = GameManager.isValid(gameName)
-                ? GameManager.getManagedGame(gameName).getGame()
-                : null;
+        Game scopedGame =
+                ManagedSeats.gameForInteraction(gameName, event.getUser().getId());
+        game = scopedGame != null
+                ? scopedGame
+                : GameManager.isValid(gameName)
+                        ? GameManager.getManagedGame(gameName).getGame()
+                        : null;
         player = null;
         privateChannel = event.getMessageChannel();
         mainGameChannel = event.getMessageChannel();

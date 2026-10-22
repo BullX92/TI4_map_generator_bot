@@ -37,9 +37,13 @@ class ManagedSeatsTest {
                         () -> ManagedSeats.asAgent(game, actor, agent, () -> {
                             assertSame(agent, ManagedSeats.resolve(game, "123", human));
                             assertSame(human, ManagedSeats.resolve(game, "999", human));
+                            assertSame(game, ManagedSeats.gameForInteraction(game.getName(), "123"));
+                            assertNull(ManagedSeats.gameForInteraction(game.getName(), "999"));
+                            assertNull(ManagedSeats.gameForInteraction("anothergame", "123"));
                             throw new IllegalStateException("handler failed");
                         }));
                 assertSame(human, ManagedSeats.resolve(game, "123", human));
+                assertNull(ManagedSeats.gameForInteraction(game.getName(), "123"));
                 assertFalse(ManagedSeats.isActing(game, "123", agent));
                 WebPlayerButtonPress.validateActor(game, actor, human, Button.primary("notepadPost", "Notes"));
                 assertThrows(
