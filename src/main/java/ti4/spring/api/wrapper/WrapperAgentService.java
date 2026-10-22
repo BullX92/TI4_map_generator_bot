@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import ti4.discord.JdaService;
 import ti4.discord.interactions.routing.ComponentIdEnvelope;
+import ti4.discord.utility.DiscordErrorUtility;
 import ti4.executors.ExecutionLockManager;
 import ti4.executors.ExecutionLockType;
 import ti4.game.Game;
@@ -120,8 +121,11 @@ public class WrapperAgentService {
             if (!TestBedService.isDeveloper(actor)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Developer role required for agent control");
             }
-            Decision decision = decision(game);
-            if (decision == null) return view(game, "WAITING", waitingMessage(game));
+            Decision offered = decision(game);
+            if (offered == null) return view(game, "WAITING", waitingMessage(game));
+            Decision decision = freshDecision(game, offered);
+            if (decision == null)
+                return view(game, "WAITING", "Das Originalangebot hat sich geändert. Aktuelle Angebote neu laden.");
             if (!lease.mayMutate())
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Active lease lost");
             game.setStoredValue(ACTIVE_REQUEST, requestId);
@@ -131,12 +135,17 @@ public class WrapperAgentService {
             int beforeSecrets = decision.player().getSo();
             int beforeCards = decision.player().getSCs().size();
             try {
-                var result = ManagedSeats.asAgent(
-                        game,
-                        actor,
-                        decision.player(),
-                        () -> WebPlayerButtonPress.press(
-                                game, actor, decision.player(), decision.message(), decision.button()));
+                TestBedPress.PressResult result;
+                try {
+                    result = ManagedSeats.asAgent(
+                            game,
+                            actor,
+                            decision.player(),
+                            () -> WebPlayerButtonPress.press(
+                                    game, actor, decision.player(), decision.message(), decision.button()));
+                } finally {
+                    messages.refresh(decision.message());
+                }
                 boolean changed =
                         switch (decision.kind()) {
                             case "Milty-Auswahl" -> game.getMiltyDraftManager().getDraftIndex() > beforeDraft;
@@ -216,6 +225,31 @@ public class WrapperAgentService {
         return null;
     }
 
+    private Decision freshDecision(Game game, Decision offered) {
+        Message source;
+        try {
+            source = offered.message()
+                    .getChannel()
+                    .retrieveMessageById(offered.message().getId())
+                    .complete();
+        } catch (RuntimeException failure) {
+            if (!DiscordErrorUtility.isUnknownMessageError(failure)) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Original agent offer unavailable");
+            }
+            messages.remove(offered.message().getId());
+            return null;
+        }
+        if (!source.getAuthor().getId().equals(JdaService.jda.getSelfUser().getId())) return null;
+        messages.capture(source);
+        Button button = source.getComponentTree().findAll(Button.class).stream()
+                .filter(candidate ->
+                        Objects.equals(candidate.getCustomId(), offered.button().getCustomId()))
+                .filter(candidate -> WrapperInteractionService.canOffer(game, source, candidate, offered.player()))
+                .findFirst()
+                .orElse(null);
+        return button == null ? null : new Decision(offered.player(), source, button, offered.kind());
+    }
+
     private Decision offered(Game game, Player player, List<String> orderedIds, String kind) {
         List<MessageChannel> channels = new ArrayList<>();
         if (game.getMainGameChannel() != null) channels.add(game.getMainGameChannel());
@@ -271,7 +305,7 @@ public class WrapperAgentService {
                 true,
                 game.getPlayers().values().stream()
                         .map(p -> new Seat(
-                                p.getUserID(), p.getUserName(), p.getFaction(), !ManagedSeats.isAgent(game, p)))
+                                p.getUserID(), p.getUserName(), displayFaction(p), !ManagedSeats.isAgent(game, p)))
                         .toList(),
                 waiting == null ? null : waiting.getUserName(),
                 waitingMessage(game),
@@ -287,7 +321,7 @@ public class WrapperAgentService {
                         .allMatch(p -> p.getSo() == 1 && p.getSCs().size() == 1))
             return "Spielstart erreicht. Weitere Botentscheidungen sind noch nicht automatisiert.";
         for (Player agent : ManagedSeats.agents(game)) {
-            if (agent.getFaction() != null && !SUPPORTED_FACTIONS.contains(agent.getFaction()))
+            if (displayFaction(agent) != null && !SUPPORTED_FACTIONS.contains(agent.getFaction()))
                 return agent.getUserName() + ": Fraktionsaufbau für " + agent.getFaction()
                         + " ist noch nicht automatisiert.";
         }
@@ -308,5 +342,10 @@ public class WrapperAgentService {
         if ("miltydraft".equals(game.getPhaseOfGame()))
             return "Milty: menschliche Auswahl selbst treffen; Agenten mit Einzelschritt bedienen.";
         return "Original-Einrichtung beziehungsweise menschliche Entscheidung ausführen; danach Agentenschritt prüfen.";
+    }
+
+    private static String displayFaction(Player player) {
+        String faction = player.getFaction();
+        return faction == null || faction.isBlank() || "null".equals(faction) ? null : faction;
     }
 }

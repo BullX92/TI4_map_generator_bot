@@ -47,16 +47,33 @@ public class WrapperMessageIndex {
                         .equals(JdaService.jda.getSelfUser().getId())) return;
         String gameName = GameNameService.getGameNameFromChannel(message.getChannel());
         if (gameName == null) return;
-        if (!isVisibleMessage(message)) {
-            remove(message.getId());
-            return;
+        messages.asMap().compute(message.getId(), (id, current) -> {
+            if (current != null
+                    && current.getTimeEdited() != null
+                    && (message.getTimeEdited() == null
+                            || message.getTimeEdited().isBefore(current.getTimeEdited()))) {
+                return current;
+            }
+            if (isVisibleMessage(message)) {
+                repository.save(new WrapperMessageEntity(
+                        id,
+                        message.getChannel().getId(),
+                        gameName,
+                        message.getChannel().getType().isThread()));
+            } else {
+                repository.deleteById(id);
+            }
+            return message;
+        });
+    }
+
+    public void refresh(Message source) {
+        try {
+            capture(source.getChannel().retrieveMessageById(source.getId()).complete());
+        } catch (RuntimeException failure) {
+            messages.invalidate(source.getId());
+            if (DiscordErrorUtility.isUnknownMessageError(failure)) repository.deleteById(source.getId());
         }
-        repository.save(new WrapperMessageEntity(
-                message.getId(),
-                message.getChannel().getId(),
-                gameName,
-                message.getChannel().getType().isThread()));
-        messages.put(message.getId(), message);
     }
 
     public void remember(String gameName, String channelId, String messageId) {

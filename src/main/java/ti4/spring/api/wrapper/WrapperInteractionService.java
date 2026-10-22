@@ -200,6 +200,7 @@ public class WrapperInteractionService {
             if (!isOriginalMessage(message) || !gameName.equals(GameNameService.getGameNameFromChannel(channel))) {
                 throw new OfferedActionStore.OfferRejected();
             }
+            messageIndex.capture(message);
             Button button = message.getComponentTree().findAll(Button.class).stream()
                     .filter(candidate -> offer.componentId().equals(candidate.getCustomId()))
                     .filter(candidate -> canOffer(game, message, candidate, player))
@@ -215,10 +216,14 @@ public class WrapperInteractionService {
             if (menu != null) validateSelection(menu, values);
             Member member = game.getGuild().retrieveMemberById(userId).complete();
             offers.claim(token, gameName, userId, revision(game, message), requestId);
-            var result = menu == null
-                    ? WebPlayerButtonPress.press(game, member, player, message, button)
-                    : WebPlayerButtonPress.select(game, member, player, message, menu, values);
-            return result(game, userId, message, result);
+            try {
+                var result = menu == null
+                        ? WebPlayerButtonPress.press(game, member, player, message, button)
+                        : WebPlayerButtonPress.select(game, member, player, message, menu, values);
+                return result(game, userId, message, result);
+            } finally {
+                messageIndex.refresh(message);
+            }
         } finally {
             ExecutionLockManager.unlock(gameName, ExecutionLockType.WRITE);
         }
@@ -241,9 +246,13 @@ public class WrapperInteractionService {
             Member member = game.getGuild().retrieveMemberById(userId).complete();
             offers.claim(token, gameName, userId, modalRevision(game), requestId);
             modals.invalidate(token);
-            var result = WebPlayerButtonPress.submitModal(
-                    game, member, player, opened.source(), opened.definition(), fields);
-            return result(game, userId, opened.source(), result);
+            try {
+                var result = WebPlayerButtonPress.submitModal(
+                        game, member, player, opened.source(), opened.definition(), fields);
+                return result(game, userId, opened.source(), result);
+            } finally {
+                messageIndex.refresh(opened.source());
+            }
         } finally {
             ExecutionLockManager.unlock(gameName, ExecutionLockType.WRITE);
         }
@@ -406,10 +415,13 @@ public class WrapperInteractionService {
             data.put(
                     "options",
                     menu.getOptions().stream()
-                            .map(option -> net.dv8tion.jda.api.utils.data.DataObject.empty()
-                                    .put("value", option.getValue())
-                                    .put("label", option.getLabel())
-                                    .put("description", option.getDescription()))
+                            .map(option -> {
+                                Map<String, Object> value = new LinkedHashMap<>();
+                                value.put("value", option.getValue());
+                                value.put("label", option.getLabel());
+                                value.put("description", option.getDescription());
+                                return value;
+                            })
                             .toList());
         }
         return data.toString();

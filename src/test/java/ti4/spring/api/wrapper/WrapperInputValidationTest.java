@@ -1,7 +1,9 @@
 package ti4.spring.api.wrapper;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -24,6 +26,28 @@ import org.springframework.web.server.ResponseStatusException;
 import ti4.game.Game;
 
 class WrapperInputValidationTest {
+    @Test
+    void originalFactionSelectionRevisionSerializesOptionalDescriptionsAndDetectsChangedChoices() {
+        Game game = new Game();
+        var message = mock(Message.class);
+        when(message.getId()).thenReturn("123");
+        when(message.getContentRaw()).thenReturn("Prioritized factions");
+        var menu = StringSelectMenu.create("prioritize_faction")
+                .addOption("Sol", "sol")
+                .addOption("Hacan", "hacan", "Trading faction")
+                .setRequiredRange(1, 1)
+                .build();
+        when(message.getComponentTree()).thenReturn(MessageComponentTree.of(ActionRow.of(menu)));
+        String first = assertDoesNotThrow(() -> WrapperInteractionService.revision(game, message));
+        assertEquals(first, WrapperInteractionService.revision(game, message));
+        var changed = StringSelectMenu.create("prioritize_faction")
+                .addOption("Sol", "sol")
+                .addOption("Jol-Nar", "jolnar")
+                .setRequiredRange(1, 1)
+                .build();
+        when(message.getComponentTree()).thenReturn(MessageComponentTree.of(ActionRow.of(changed)));
+        assertNotEquals(first, WrapperInteractionService.revision(game, message));
+    }
 
     @Test
     void originalHolderGrantMakesSharedPrimaryAvailableOnlyForItsGrantee() {

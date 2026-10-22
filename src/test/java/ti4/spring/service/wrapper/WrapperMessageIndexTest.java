@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,6 +31,79 @@ import ti4.game.persistence.GameManager;
 import ti4.service.game.GameNameService;
 
 class WrapperMessageIndexTest {
+    @Test
+    void restRefreshUpdatesOffersWithoutGatewayAndLateOlderEventsCannotRestoreTheOldMenu() {
+        JDA previous = JdaService.jda;
+        JDA jda = mock(JDA.class);
+        SelfUser bot = mock(SelfUser.class);
+        when(bot.getId()).thenReturn("bot");
+        when(jda.getSelfUser()).thenReturn(bot);
+        JdaService.jda = jda;
+        var channel = mock(MessageChannelUnion.class);
+        when(channel.getId()).thenReturn("channel");
+        when(channel.getType()).thenReturn(ChannelType.TEXT);
+        var history = mock(MessageHistory.class);
+        when(channel.getHistory()).thenReturn(history);
+        RestAction<List<Message>> historyRequest = mock(RestAction.class);
+        when(history.retrievePast(100)).thenReturn(historyRequest);
+        when(historyRequest.complete()).thenReturn(List.of());
+        Message oldMenu = mock(Message.class);
+        Message nextMenu = mock(Message.class);
+        Message removedMenu = mock(Message.class);
+        for (Message message : List.of(oldMenu, nextMenu, removedMenu)) {
+            when(message.getId()).thenReturn("1");
+            when(message.getChannel()).thenReturn(channel);
+            when(message.getAuthor()).thenReturn(bot);
+            when(message.getContentRaw()).thenReturn("Original draft settings");
+        }
+        when(oldMenu.getComponentTree())
+                .thenReturn(MessageComponentTree.of(ActionRow.of(Button.primary("open", "Open"))));
+        when(nextMenu.getComponentTree())
+                .thenReturn(MessageComponentTree.of(ActionRow.of(Button.primary("choose", "Choose"))));
+        when(removedMenu.getComponentTree()).thenReturn(MessageComponentTree.of());
+        when(nextMenu.getTimeEdited()).thenReturn(OffsetDateTime.parse("2026-10-22T10:00:01Z"));
+        when(removedMenu.getTimeEdited()).thenReturn(OffsetDateTime.parse("2026-10-22T10:00:02Z"));
+        RestAction<Message> retrieve = mock(RestAction.class);
+        when(channel.retrieveMessageById("1")).thenReturn(retrieve);
+        when(retrieve.complete()).thenReturn(nextMenu, removedMenu);
+        var repository = mock(WrapperMessageRepository.class);
+        var cursors = mock(WrapperChannelRepository.class);
+        Map<String, WrapperMessageEntity> rows = new HashMap<>();
+        when(repository.save(any())).thenAnswer(call -> {
+            WrapperMessageEntity row = call.getArgument(0);
+            rows.put(row.getMessageId(), row);
+            return row;
+        });
+        doAnswer(call -> {
+                    rows.remove(call.getArgument(0));
+                    return null;
+                })
+                .when(repository)
+                .deleteById(anyString());
+        when(repository.findByGameNameAndChannelIdOrderByMessageIdDesc("game", "channel"))
+                .thenAnswer(ignored -> new ArrayList<>(rows.values()));
+        try (var gameManager = mockStatic(GameManager.class);
+                var names = mockStatic(GameNameService.class)) {
+            gameManager.when(GameManager::isGameNamesLoaded).thenReturn(true);
+            names.when(() -> GameNameService.getGameNameFromChannel(channel)).thenReturn("game");
+            var index = new WrapperMessageIndex(repository, cursors);
+            index.capture(oldMenu);
+            assertThat(index.offeredMessages("game", channel)).containsExactly(oldMenu);
+
+            index.refresh(oldMenu);
+            assertThat(index.offeredMessages("game", channel)).containsExactly(nextMenu);
+            index.capture(oldMenu);
+            assertThat(index.offeredMessages("game", channel)).containsExactly(nextMenu);
+
+            index.refresh(nextMenu);
+            index.capture(nextMenu);
+            assertThat(index.offeredMessages("game", channel)).isEmpty();
+            assertThat(rows).isEmpty();
+        } finally {
+            JdaService.jda = previous;
+        }
+    }
+
     @Test
     void originalMiltySummaryAndSliceImageRemainVisibleWithoutButtons() {
         JDA previous = JdaService.jda;

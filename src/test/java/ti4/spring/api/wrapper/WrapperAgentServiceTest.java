@@ -31,6 +31,24 @@ import ti4.spring.service.wrapper.WrapperMessageIndex;
 
 class WrapperAgentServiceTest {
     @Test
+    void undraftedLiteralNullFactionsAreShownAsPendingRatherThanUnsupported() {
+        try (var games = mockStatic(GameManager.class);
+                var settings = mockStatic(GlobalSettings.class, CALLS_REAL_METHODS)) {
+            settings.when(() -> GlobalSettings.getSetting("testbed_enabled", Object.class, false))
+                    .thenReturn(true);
+            Game game = registered();
+            game.getPlayers().values().forEach(player -> player.setFaction("null"));
+            ManagedGame managed = mock(ManagedGame.class);
+            when(managed.getGame()).thenReturn(game);
+            games.when(() -> GameManager.getManagedGame("agentproof")).thenReturn(managed);
+            var service = new WrapperAgentService(mock(ActiveLeaseService.class), mock(WrapperMessageIndex.class));
+            var view = service.observe("agentproof", "123");
+            assertTrue(view.seats().stream().allMatch(seat -> seat.faction() == null));
+            assertFalse(view.message().contains("nicht automatisiert"));
+        }
+    }
+
+    @Test
     void failedFinalSaveKeepsUncertainBarrierAfterTheOriginalActionChangedState() {
         JDA previousJda = JdaService.jda;
         List<Role> previousRoles = new ArrayList<>(JdaService.developerRoles);
@@ -64,6 +82,7 @@ class WrapperAgentServiceTest {
             Message message = mock(Message.class, RETURNS_DEEP_STUBS);
             when(message.getAuthor().getId()).thenReturn("999");
             when(message.getId()).thenReturn("111");
+            when(message.getChannel().retrieveMessageById("111").complete()).thenReturn(message);
             Button button = Button.primary("discardSecret_1", "Discard");
             MessageComponentTree tree = mock(MessageComponentTree.class);
             when(tree.findAll(Button.class)).thenReturn(List.of(button));
@@ -97,6 +116,73 @@ class WrapperAgentServiceTest {
             assertEquals("UNCERTAIN", service.step("agentproof", "123", "next").status());
             assertEquals("save-failure", game.getStoredValue("wrapperAgentActiveRequest"));
             transport.verify(() -> WebPlayerButtonPress.press(game, actor, agent, message, button), times(1));
+        } finally {
+            JdaService.jda = previousJda;
+            JdaService.developerRoles.clear();
+            JdaService.developerRoles.addAll(previousRoles);
+        }
+    }
+
+    @Test
+    void removedOriginalButtonDoesNotRecordIntentOrExecuteTheCachedAgentOffer() {
+        JDA previousJda = JdaService.jda;
+        List<Role> previousRoles = new ArrayList<>(JdaService.developerRoles);
+        try (var games = mockStatic(GameManager.class);
+                var settings = mockStatic(GlobalSettings.class, CALLS_REAL_METHODS);
+                var transport = mockStatic(WebPlayerButtonPress.class)) {
+            settings.when(() -> GlobalSettings.getSetting("testbed_enabled", Object.class, false))
+                    .thenReturn(true);
+            Game game = spy(registered());
+            game.setPhaseOfGame("playerSetup");
+            game.setRound(1);
+            Player agent = spy(ManagedSeats.agents(game).getFirst());
+            game.getPlayers().put(agent.getUserID(), agent);
+            doReturn(null).when(agent).getCardsInfoThread();
+            agent.getSecrets().put("first", 1);
+            agent.getSecrets().put("second", 2);
+            Guild guild = mock(Guild.class, RETURNS_DEEP_STUBS);
+            doReturn(guild).when(game).getGuild();
+            TextChannel channel = mock(TextChannel.class);
+            doReturn(channel).when(game).getMainGameChannel();
+            doReturn(channel).when(game).getActionsChannel();
+            Member actor = mock(Member.class);
+            Role developer = mock(Role.class);
+            when(actor.getId()).thenReturn("123");
+            when(actor.getRoles()).thenReturn(List.of(developer));
+            JdaService.developerRoles.add(developer);
+            when(guild.retrieveMemberById("123").useCache(false).complete()).thenReturn(actor);
+            JDA jda = mock(JDA.class, RETURNS_DEEP_STUBS);
+            JdaService.jda = jda;
+            when(jda.getSelfUser().getId()).thenReturn("999");
+            Message cached = mock(Message.class, RETURNS_DEEP_STUBS);
+            Message fresh = mock(Message.class, RETURNS_DEEP_STUBS);
+            when(cached.getAuthor().getId()).thenReturn("999");
+            when(cached.getId()).thenReturn("111");
+            when(fresh.getAuthor().getId()).thenReturn("999");
+            when(cached.getChannel().retrieveMessageById("111").complete()).thenReturn(fresh);
+            MessageComponentTree oldTree = mock(MessageComponentTree.class);
+            when(oldTree.findAll(Button.class)).thenReturn(List.of(Button.primary("discardSecret_1", "Discard")));
+            when(cached.getComponentTree()).thenReturn(oldTree);
+            when(fresh.getComponentTree()).thenReturn(MessageComponentTree.of());
+            WrapperMessageIndex messages = mock(WrapperMessageIndex.class);
+            when(messages.offeredMessages("agentproof", channel)).thenReturn(List.of(cached));
+            ActiveLeaseService lease = mock(ActiveLeaseService.class);
+            when(lease.mayMutate()).thenReturn(true);
+            when(lease.isReady()).thenReturn(true);
+            ManagedGame managed = mock(ManagedGame.class);
+            when(managed.getGame()).thenReturn(game);
+            games.when(() -> GameManager.getManagedGame("agentproof")).thenReturn(managed);
+            assertEquals(
+                    "WAITING",
+                    new WrapperAgentService(lease, messages)
+                            .step("agentproof", "123", "changed")
+                            .status());
+            assertEquals("", game.getStoredValue("wrapperAgentActiveRequest"));
+            assertEquals("", game.getStoredValue("wrapperAgentRequest_changed"));
+            assertEquals(2, agent.getSo());
+            transport.verifyNoInteractions();
+            games.verify(() -> GameManager.save(any(Game.class), anyString()), never());
+            verify(messages).capture(fresh);
         } finally {
             JdaService.jda = previousJda;
             JdaService.developerRoles.clear();
