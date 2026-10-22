@@ -48,7 +48,7 @@ class WrapperTacticalPolicyTest extends BaseTi4Test {
         Game game = game();
         Player player = game.getPlayer("agent");
         var plan = WrapperTacticalPolicy.choose(game, player);
-        for (int stage : new int[] {2, 4, 5, 7, 8, 9, 11}) {
+        for (int stage : new int[] {2, 4, 5, 7, 8, 9, 12}) {
             game.setActivePlayerID(player.getUserID());
             var atStage = new WrapperTacticalPolicy.Plan(
                     plan.playerId(), plan.origin(), plan.sourcePlanet(), plan.target(), plan.planet(), stage);
@@ -59,6 +59,22 @@ class WrapperTacticalPolicyTest extends BaseTi4Test {
         var activation = new WrapperTacticalPolicy.Plan(
                 plan.playerId(), plan.origin(), plan.sourcePlanet(), plan.target(), plan.planet(), 2);
         assertTrue(WrapperTacticalPolicy.changed(game, player, activation, 3, 1, 2));
+    }
+
+    @Test
+    void usesTheOriginalEndTurnOfferAndRetainsTheOptionalAbilityConfirmation() {
+        Game game = game();
+        Player player = game.getPlayer("agent");
+        var original = ti4.helpers.ButtonHelper.getEndTurnButton(game, player);
+        var end = new WrapperTacticalPolicy.Plan("agent", "301", "jord", "201", "wellon", 11);
+        String handler = ti4.discord.interactions.routing.ComponentIdEnvelope.decode(original.getCustomId())
+                .handlerId();
+        assertTrue(end.buttons(player).contains(handler));
+        assertEquals(java.util.List.of("turnEnd"), end.next().buttons(player));
+        game.setActivePlayerID(player.getUserID());
+        assertFalse(WrapperTacticalPolicy.changed(game, player, end.next(), 3, 1, 2));
+        game.setActivePlayerID("human");
+        assertTrue(WrapperTacticalPolicy.changed(game, player, end.next(), 3, 1, 2));
     }
 
     private Game game() {

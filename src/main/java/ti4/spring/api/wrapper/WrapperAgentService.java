@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ import ti4.spring.service.deploy.ActiveLeaseService;
 import ti4.spring.service.wrapper.WrapperMessageIndex;
 
 @Service
+@ConditionalOnProperty(name = "ti4.wrapper.enabled", havingValue = "true")
 public class WrapperAgentService {
     public record Seat(String id, String name, String faction, boolean human) {}
 
@@ -220,7 +222,8 @@ public class WrapperAgentService {
                         };
                 String status = result.outcome() == TestBedPress.Outcome.PRESSED && changed ? "COMPLETED" : "UNCERTAIN";
                 if ("COMPLETED".equals(status) && plan != null) {
-                    if (plan.stage() == 11) game.removeStoredValue(WrapperTacticalPolicy.PLAN);
+                    if (plan.stage() >= 11 && !decision.player().getUserID().equals(game.getActivePlayerID()))
+                        game.removeStoredValue(WrapperTacticalPolicy.PLAN);
                     else
                         game.setStoredValue(
                                 WrapperTacticalPolicy.PLAN, plan.next().encode());
@@ -379,6 +382,7 @@ public class WrapperAgentService {
                 game.getRound(),
                 !"true".equals(game.getStoredValue("wrapperAgentsRunning")),
                 game.getPlayers().values().stream()
+                        .filter(p -> !p.isDummy() && !p.isNpc())
                         .map(p -> new Seat(
                                 p.getUserID(), p.getUserName(), displayFaction(p), !ManagedSeats.isAgent(game, p)))
                         .toList(),
@@ -390,7 +394,6 @@ public class WrapperAgentService {
 
     private static String waitingMessage(Game game) {
         if ("action".equals(game.getPhaseOfGame())
-                && game.getPlayers().size() == 6
                 && game.getRealPlayers().size() == 6
                 && game.getRealPlayers().stream()
                         .allMatch(p -> p.getSo() == 1 && p.getSCs().size() == 1))

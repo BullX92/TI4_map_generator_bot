@@ -36,7 +36,8 @@ final class WrapperTacticalPolicy {
                 case 8 -> List.of("landUnits_" + target + "_1gf_" + planet + "_" + player.getColor());
                 case 9 -> List.of("doneLanding_" + target);
                 case 10 -> List.of("doneWithTacticalAction");
-                case 11 -> List.of("turnEnd");
+                case 11 -> List.of("turnEnd", "endOfTurnAbilities");
+                case 12 -> List.of("turnEnd");
                 default -> List.of();
             };
         }
@@ -113,7 +114,7 @@ final class WrapperTacticalPolicy {
                         && target.getSpaceUnitHolder().getUnitCount(UnitType.Infantry, player) > 0;
             case 8 -> target.getUnitHolders().get(plan.planet()).getUnitCount(UnitType.Infantry, player) > 0;
             case 9 -> player.getPlanets().contains(plan.planet());
-            case 11 -> !player.getUserID().equals(game.getActivePlayerID());
+            case 12 -> !player.getUserID().equals(game.getActivePlayerID());
             default -> true;
         };
     }
